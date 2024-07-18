@@ -1,0 +1,15 @@
+[CONFIG]
+retry_limit = 5
+data_limit = 20
+openai_model = gpt-4-1106-preview
+token_limimt = 2000
+[INDEX]
+token_limit = 3000
+openai_model = gpt-4-1106-preview
+retry_limit = 5
+sauce_text_path =
+index_path = ./data/index/
+a_json_path = ./data/index/a_text.json
+openai_model_16k = gpt-3.5-turbo-1106
+[SPLITTER]
+qa_text_path = ./data/index/qa.txt
