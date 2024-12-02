@@ -7,7 +7,7 @@ class OpenaiAdapter:
 
     load_dotenv()
     config = configparser.ConfigParser()
-    config.read('config.txt')
+    config.read('config.ini')
     retry_limit = int(config.get('CONFIG', 'retry_limit', fallback=5))
 
     def __init__(self):
