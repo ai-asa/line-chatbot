@@ -101,7 +101,7 @@ class RichmenuController:
                     },
                     "action": {
                         "type": "postback",
-                        "data": "XXX"
+                        "data": "rps"
                     }
                 },
                 {
@@ -113,7 +113,7 @@ class RichmenuController:
                     },
                     "action": {
                         "type": "postback",
-                        "data": "XXX"
+                        "data": "rpr"
                     }
                 },
             ]
@@ -145,7 +145,19 @@ class RichmenuController:
                     "bounds": {
                         "x": 0,
                         "y": 151,
-                        "width": 1250,
+                        "width": 833,
+                        "height": 1536
+                    },
+                    "action": {
+                        "type": "postback",
+                        "data": "try"
+                    }
+                },
+                {
+                    "bounds": {
+                        "x": 834,
+                        "y": 151,
+                        "width": 833,
                         "height": 768
                     },
                     "action": {
@@ -155,21 +167,9 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 1251,
-                        "y": 151,
-                        "width": 1250,
-                        "height": 768
-                    },
-                    "action": {
-                        "type": "postback",
-                        "data": "XXX"
-                    }
-                },
-                {
-                    "bounds": {
-                        "x": 0,
+                        "x": 834,
                         "y": 919,
-                        "width": 1250,
+                        "width": 833,
                         "height": 768
                     },
                     "action": {
@@ -179,9 +179,21 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 1251,
+                        "x": 1667,
+                        "y": 151,
+                        "width": 834,
+                        "height": 151
+                    },
+                    "action": {
+                        "type": "postback",
+                        "data": "XXX"
+                    }
+                },
+                {
+                    "bounds": {
+                        "x": 1667,
                         "y": 919,
-                        "width": 1250,
+                        "width": 834,
                         "height": 768
                     },
                     "action": {
