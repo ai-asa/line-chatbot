@@ -89,8 +89,7 @@ def reg_sub(request_json):
     sub_id = request_json['data']['object']['id']
     product_info, userId = sa.fetch_checkout_data(sub_id)
     new_plan = PRICE_IDS.get(product_info['price_id'], 'unknown_plan')
-    fa.set_sub_status(db, userId, current_status=new_plan)
-    fa.set_botType(db, userId, 'fr')
+    fa.set_new_sub(db, userId, 'fr', new_status=new_plan)
     text = reg_sub_text(new_plan)
     la.push_message(LINE_ACCESS_TOKEN, userId, text)
     return True
@@ -124,10 +123,12 @@ def update_sub(request_json):
 def res_cancel(sub,userId):
     plan_period = datetime.datetime.fromtimestamp(sub['current_period_end'], datetime.timezone.utc)
     # firestoreから現在のステータスを取得
-    cu_sta_data = fa.get_sub_status(db, userId)
-    cu_sta = cu_sta_data['current_sub_status']
+    # cu_sta_data = fa.get_sub_status(db, userId)
+    user_data = fa.get_user_data(db,userId,data_limit)
+    cu_sta = user_data['current_sub_status']
     # Firestoreの状態を更新（next_sub_status と plan_change_date を設定）
     fa.set_sub_status(db,userId,current_status=cu_sta,next_status='free',plan_change_date=plan_period)
+
     return [f'【解約予約通知】\nご契約プランの解約予約が完了しました。\n\n現在のプランは{plan_period.strftime("%Y年%m月%d日 %H:%M:%S")}までご利用可能です。']
 
 def ud_grade(sub,userId,pre_ats):
@@ -177,23 +178,24 @@ def line_event_process(request_json):
         eventType = event['type']
         replyToken = event['replyToken']
         userId = event['source']['userId']
+        user_data = fa.get_user_data(db,userId,data_limit)
         if eventType == "message":
-            result = event_message(event,replyToken,userId)
+            result = event_message(event,replyToken,userId,user_data)
         elif eventType == "follow":
             result = event_follow(event,replyToken,userId)
         elif eventType == "unfollow":
             result = event_unfollow(event,replyToken,userId)
         elif eventType == "postback":
-            result = event_postback(event,replyToken,userId)
+            result = event_postback(event,replyToken,userId,user_data)
         results.append(result) 
     return results
 
-def event_message(event,replyToken,userId):
+def event_message(event,replyToken,userId,user_data):
     # try:
     res = []
     mesType = event['message']['type']
     if mesType == "text":
-        res = message_process(event,userId)
+        res = message_process(event,userId,user_data)
     else:
         res = ["テキストメッセージ以外には対応していません。"]
     la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
@@ -202,28 +204,24 @@ def event_message(event,replyToken,userId):
     #     print(e)
     #     return False
     
-def message_process(event,userId):
+def message_process(event,userId,user_data):
     mesText = event['message']['text']
-    pending_action = fa.get_pending_action(db, userId)
-    # ここでuserデータを確認して、trialが有効かをチェック
-    # 全件データの取得処理
-    # check = check_try(userId)
-    # pending_actionと取得が重複してるので、改善する
+    pending_action = user_data['pending_action']
     if pending_action:
-        return sub_act(pending_action,mesText,userId)
-    # elif not check:
-    #     return ['トライアル期間が終了しました。']
+        return sub_act(pending_action,mesText,userId,user_data)
     else:
-        mt = messageText(event,userId,mesText)
+        mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
 
-def sub_act(pending_action,mesText,userId):
+def sub_act(pending_action,mesText,userId,user_data):
     if mesText == 'はい':
-        return exec_update_sub(pending_action,userId)
+        return exec_update_sub(pending_action,userId,user_data)
     else:
         return cancel_update_sub(userId)
 
-def exec_update_sub(pending_action,userId):
+def exec_update_sub(pending_action,userId,user_data):
+    if pending_action['desired_plan'] == 'try':
+        return exec_start_trial(userId)
     cus_id = sa.get_customer_id(userId)
     cu_sub = sa.get_current_subscription(cus_id)
     sub_id = cu_sub.id
@@ -231,20 +229,26 @@ def exec_update_sub(pending_action,userId):
     if pending_action['action'] == 'upgrade':
         return exec_upgrade_sub(sub_id,new_price_id,userId,pending_action)
     elif pending_action['action'] == 'downgrade':
-        return exec_downgrade_sub(sub_id,new_price_id,userId,pending_action)
+        return exec_downgrade_sub(sub_id,new_price_id,userId,pending_action,user_data)
     else:
         return ['不明なアクションです。']
+    
+def exec_start_trial(userId):
+    trial_data = fa.set_trial_period(db,userId)
+    trial_start = trial_data['trial_start']
+    trial_end = trial_data['trial_end']
+    return ["【開始通知】\n無料トライアルが開始されました。", f"期間は{trial_start}から{trial_end}までです。","期間中は全ての機能をご利用いただけます", "ご利用いただき誠にありがとうございます。"]
 
 def exec_upgrade_sub(sub_id,new_price_id,userId,pending_action):
     sa.upgrade_subscription(sub_id, new_price_id)
     fa.set_sub_status(db, userId, current_status=pending_action['desired_plan'])
     return ['更新処理中']
 
-def exec_downgrade_sub(sub_id,new_price_id,userId,pending_action):
+def exec_downgrade_sub(sub_id,new_price_id,userId,pending_action,user_data):
     sa.downgrade_subscription(sub_id, new_price_id)
     plan_change_date = sa.get_plan_change_date(sub_id)
-    sub_status = fa.get_sub_status(db, userId)
-    fa.set_sub_status(db,userId,current_status=sub_status['current_sub_status'],next_status=pending_action['desired_plan'],plan_change_date=plan_change_date)
+    # sub_status = fa.get_sub_status(db, userId)
+    fa.set_sub_status(db,userId,current_status=user_data['current_sub_status'],next_status=pending_action['desired_plan'],plan_change_date=plan_change_date)
     return ['更新処理中']
 
 def cancel_update_sub(userId):
@@ -252,7 +256,7 @@ def cancel_update_sub(userId):
     return ['操作をキャンセルしました。']
 
 def event_follow(event,replyToken,userId):
-    user_data = fa.get_user_data(db,userId,data_limit)
+    # user_data = fa.get_user_data(db,userId,data_limit)
     return True
     # except Exception as e:
     #     print(e)
@@ -261,16 +265,13 @@ def event_follow(event,replyToken,userId):
 def event_unfollow(event,replyToken,userId):
     return True
 
-def event_postback(event,replyToken,userId):
+def event_postback(event,replyToken,userId,user_data):
     postType = event['postback']['data']
     if postType in ['kn','qa','yo','gs']:
-        res = mode_change(userId,postType)
+        res = mode_change(userId,postType,user_data)
     elif postType in ['980','1980','3980','free','try']:
-        rs = RegStripe(event,postType,replyToken,userId)
+        rs = RegStripe(event,postType,replyToken,userId,user_data)
         res = rs.stripe_post_process()
-    elif postType == 'try':
-        # res = try_process(userId)
-        pass
     elif postType == 'tab':
         return True
     else:
@@ -282,15 +283,8 @@ def event_postback(event,replyToken,userId):
     #     print(e)
     #     return False
 
-def mode_change(userId,postType):
-    # ここでuserデータを取得するのはやめて、手前で一斉に取得するようにするべき
-    sub_status = fa.get_sub_status(db, userId)
-    current_plan = sub_status['current_sub_status']
-    if current_plan == 'try': # トライアル期間のチェック
-        # judge,text = check_try(userId)
-        # if not judge:
-        #     return text
-        pass
+def mode_change(userId,postType,user_data):
+    current_plan = user_data['current_sub_status']
     if postType == "kn":
         judg,text = mode_kn(current_plan)
     elif postType == "qa":
@@ -328,22 +322,24 @@ def mode_gs(current_plan):
         return True, ["【モード変更】\n保険提案に関する自由度の高い相談に対応します。"]
 
 class RegStripe:
-    def __init__(self,event,postType,replyToken,userId):
+    def __init__(self,event,postType,replyToken,userId,user_data):
         self.event = event
         self.postType = postType
         self.replyToken = replyToken
         self.userId = userId
+        self.user_data = user_data
     
     def stripe_post_process(self):
-        sub_status = fa.get_sub_status(db, self.userId)# tryのとき、トライアル期間とフラグをチェックする→sub_statusにフラグと期間を保存しておく
-        current_plan = sub_status['current_sub_status']
-        next_plan = sub_status['next_sub_status']
-        # if self.postType == 'try':
-        #     if not check_try(sub_status):
-        #         return ['トライアル期間が終了しました。'] # sub_statusも更新する必要あり
+        current_plan = self.user_data['current_sub_status']
+        next_plan = self.user_data['next_sub_status']
+        isTrialValid = self.user_data['isTrialValid']
         action = self.det_sub_act(current_plan, next_plan, self.postType)
         if action == 'free':
             return self.cancel_sub(current_plan,next_plan)
+        elif action == 'start_trial':
+            return self.start_trial(action,self.postType,isTrialValid)
+        elif action == 'invalid_trial':
+            return ['有料プランから無料トライアルへの変更はできません。']
         elif action == 'new_subscription':
             return self.new_sub(self.postType)
         elif action == 'upgrade':
@@ -363,7 +359,7 @@ class RegStripe:
         plan_order = ['free', 'try', '980', '1980', '3980']
         current_index = plan_order.index(current_plan)
         if next_plan is None:
-            next_index = 5
+            next_index = 6
         else:
             next_index = plan_order.index(next_plan)
         desired_index = plan_order.index(desired_plan)
@@ -371,7 +367,7 @@ class RegStripe:
         if desired_plan == 'free':
             return 'free'
         elif current_plan == 'free' and desired_plan == 'try':
-            return 'new_trial'
+            return 'start_trial'
         elif desired_plan == 'try' and current_index > desired_index:
             return 'invalid_trial'
         elif desired_index == current_index:
@@ -388,20 +384,26 @@ class RegStripe:
             return 'downgrade'
         else:
             return 'already_subscribed'
+    
+    def start_trial(self,action,desired_plan,isTrialValid):
+        if isTrialValid:
+            fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
+            return [f"【開始確認】\n１週間の無料トライアルを開始しますか？","※※※※※※※※※※※\n\n・「はい」と返信いただくと、１週間の無料トライアルが開始されます\n\n※※※※※※※※※※※","よろしければ「はい」と返信してください。"]
+        else:
+            return ['トライアル期間が終了しています。']
 
     def cancel_sub(self,current_plan,next_plan):
         if current_plan == 'free':
             return ['ご契約済みのプランはありません。']
         elif current_plan == 'try':
-            return ['現在トライアル期間中であり、ご契約済みのプランはありません。']
+            return ['現在トライアルご契約中であり、ご契約済みの有料プランはありません。']
         elif next_plan == 'free':
             return ['ご契約プランの解約予約は完了しています。']
         else:
             return ['【解約予約用URL】\nご契約プランの解約をご希望の場合は以下のURLから手続きください。', sa.create_cancel_session(self.userId), '※※※※※※※※※※※\n解約につき以下の点にご注意ください。\n\n・解約は当契約月の最終日に完了します\n\n・解約完了までは引き続き現在のプランをご利用可能です\n\n・プラン変更はできなくなります。解約完了後に再度ご契約ください\n\n※※※※※※※※※※※']
 
     def new_sub(self,desired_plan):
-        return ["【ご契約用URL】\n以下のURLからご契約手続きを進めてください。\n\n" + sa.create_checkout_session(self.userId, desired_plan)]
-    # トライアルの解除は、契約完了処理の際に行う
+        return ["【ご契約用URL】\n以下のURLからご契約手続きを進めてください。\n\n" + sa.create_checkout_session(self.userId, desired_plan),'ご契約中の無料トライアルは解約されます']
 
     def upgrade_sub(self,action,next_plan,desired_plan):
         if next_plan == 'free':
@@ -418,13 +420,37 @@ class RegStripe:
             return [f"【ご契約内容の変更予約の確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更予約します。","※※※※※※※※※※※\nプラン変更予約につき以下の点にご注意ください。\n\n・本契約月は現在プランの料金が適用され、翌契約月から予約プランの料金が適用されます\n\n・プラン変更の完了まで、引き続き現在プランの機能をご利用可能です\n\n・プラン変更が完了するまで、他プランへの変更はできません\n\n※※※※※※※※※※※","よろしければ「はい」と返信してください。"]
 
 class messageText:
-    def __init__(self,event,userId,userText):
+    def __init__(self,event,userId,userText,user_data):
         self.userText = userText
         self.userId = userId
-        self.userData = fa.get_user_data(db, userId,data_limit)
+        self.userData = user_data
     
-    def res_text(self):# ※※要修正※※ 現在のプランを参照してモードを使用できるのかを判定する必要
+    def res_text(self):
+        isTrialValid = self.userData['isTrialValid']
+        currentPlan = self.userData['current_sub_status']
         botType = self.userData['botType']
+        if currentPlan == 'free':
+            return ['チャット機能をご利用いただくには、無料トライアルか有料プランへのご契約が必要です。', 'メニューから「プランの変更・契約」をタップしてご確認ください。']
+        if isTrialValid and currentPlan == 'try' or currentPlan == '980':
+            return self.processBegin(botType)
+        elif isTrialValid and currentPlan == 'try' or currentPlan == '1980':
+            return self.processMiddle(botType)
+    
+    def processBegin(self,botType):
+        if botType == "fr":
+            return ['メニューからモードを選択してください。']
+        elif botType == "kn":
+            return self.res_kn()
+        elif botType == "qa":
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります。']
+        elif botType == "yo":
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります。']
+        elif botType == "gs":
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります。']
+        else:
+            return ['エラー：無効なモードを指定しています。']
+    
+    def processMiddle(self,botType):
         if botType == "fr":
             return ['メニューからモードを選択してください。']
         elif botType == "kn":

@@ -35,6 +35,31 @@ class FirestoreAdapter:
         ref_userIds = db.collection('userIds').document(user_id)
         ref_userIds.set(data, merge=True)
 
+    def set_new_sub(self, db, user_id, botType, new_status=None, pending_action=None):
+        """
+        ・トライアルプランからの切り替え対応
+        / 現在のプランを取得し、トライアルプランの場合はisTrialValidをFalseにする
+        ・current_sub_status、botType、pending_actionを更新する
+        """
+        user_ref = db.collection('userIds').document(user_id)
+        data = {
+            "current_sub_status": new_status,
+            "pending_action": pending_action,
+            "isTrialValid": True,
+            "botType": botType
+        }
+        
+        # 現在トライアルプランの場合の処理
+        doc = user_ref.get()
+        if doc.exists:
+            user_data = doc.to_dict()
+            current_sub_status = user_data.get('current_sub_status', 'free')
+            if current_sub_status == 'try':
+                data['isTrialValid'] = False
+                
+        # 同じリファレンスを使用して保存
+        user_ref.set(data, merge=True)
+
     def get_sub_status(self, db, user_id):
         ref_userIds = db.collection('userIds').document(user_id)
         doc = ref_userIds.get()
@@ -102,7 +127,7 @@ class FirestoreAdapter:
 
     def update_history(self, db, userId, speaker, message, data_limit):
         new_message = {
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "speaker": speaker,
             "content": message
         }
@@ -136,27 +161,68 @@ class FirestoreAdapter:
     def get_user_data(self, db, user_id, data_limit):
         """
         指定した user_id に紐づくすべてのデータを取得します。
+        サブステータスのチェックと更新（get_sub_status の処理）も含めています。
         """
         user_ref = db.collection('userIds').document(user_id)
         doc = user_ref.get()
+        
         if doc.exists:
             user_data = doc.to_dict()
-            # conversations サブコレクションのデータを取得
+            update_data = {}  # 更新データを格納する辞書
+            
+            # トライアル期限チェック処理
+            current_sub_status = user_data.get('current_sub_status','free')
+            is_trial_valid = user_data.get('isTrialValid', True)
+            trial_end_str = user_data.get('trial_end')
+            next_sub_status = user_data.get('next_sub_status')
+            plan_change_date_str = user_data.get('plan_change_date')
+            now = datetime.datetime.now(datetime.timezone.utc)
+            if trial_end_str and  current_sub_status == 'try' and is_trial_valid:
+                trial_end = datetime.datetime.fromisoformat(trial_end_str)
+                if  now >= trial_end:
+                    update_data.update({
+                        'current_sub_status': 'free',
+                        'isTrialValid': False
+                    })
+                    user_data['current_sub_status'] = 'free'
+                    user_data['isTrialValid'] = False
+            
+            if plan_change_date_str and next_sub_status:
+                plan_change_date = datetime.datetime.fromisoformat(plan_change_date_str)
+                if now >= plan_change_date:
+                    update_data.update({
+                        'current_sub_status': next_sub_status,
+                        'next_sub_status': firestore.DELETE_FIELD,
+                        'plan_change_date': firestore.DELETE_FIELD
+                    })
+                    user_data['current_sub_status'] = next_sub_status
+                    user_data.pop('next_sub_status', None)
+                    user_data.pop('plan_change_date', None)
+            
+            # 更新が必要な場合のみ実行
+            if update_data:
+                user_ref.update(update_data)
+            
+            # conversations サブコレクションのデータ取得
             conversations_ref = user_ref.collection('conversations')
             snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(data_limit).get()
             conversations = [snapshot.to_dict() for snapshot in snapshots]
             user_data['conversations'] = conversations
+            
             return user_data
         else:
             # ユーザーデータが存在しない場合は初期化する
             self.initialize_user_data(db, user_id)
             return {
-                "created_at": datetime.datetime.now().isoformat(),
+                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 "current_sub_status": "free",
                 "next_sub_status": None,
                 "plan_change_date": None,
                 "botType": "fr",
                 "pending_action": None,
+                "trial_start": None,
+                "trial_end": None,
+                "isTrialValid": True,
                 "conversations": []
             }
 
@@ -166,15 +232,51 @@ class FirestoreAdapter:
         既に存在するフィールドは上書きされません。
         """
         initial_data = {
-            "created_at": datetime.datetime.now().isoformat(),
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "current_sub_status": "free",
             "next_sub_status": None,
             "plan_change_date": None,
             "botType": "fr",
             "pending_action": None,
-            # 他に初期化したいフィールドがあればここに追加
+            "trial_start": None,
+            "trial_end": None,
+            "isTrialValid": True,
+            "conversations": []
         }
 
         user_ref = db.collection('userIds').document(user_id)
         # 既存のデータを上書きしないように merge=True を指定
         user_ref.set(initial_data, merge=True)
+
+    def set_trial_period(self, db, user_id):
+        """
+        ユーザーのトライアル期間を設定します。
+        trial_start に現在時刻を、trial_end に1週間後の時刻を設定します。
+        データベースにはUTCで保存し、戻り値はJST形式で返します。
+        """
+        now = datetime.datetime.now(datetime.timezone.utc)
+        trial_end = now + datetime.timedelta(weeks=1)
+        
+        # データベース保存用のデータ（UTC）
+        data = {
+            "current_sub_status": "try",
+            "pending_action": None,
+            "trial_start": now.isoformat(),
+            "trial_end": trial_end.isoformat()
+        }
+        
+        user_ref = db.collection('userIds').document(user_id)
+        user_ref.set(data, merge=True)
+
+        # JSTに変換（UTC+9時間）
+        jst = datetime.timezone(datetime.timedelta(hours=9))
+        now_jst = now.astimezone(jst)
+        trial_end_jst = trial_end.astimezone(jst)
+
+        # 戻り値用のデータ（JST）
+        return {
+            "current_sub_status": "try",
+            "pending_action": None,
+            "trial_start": now_jst.strftime('%Y年%m月%d日%H時%M分'),
+            "trial_end": trial_end_jst.strftime('%Y年%m月%d日%H時%M分')
+        }
