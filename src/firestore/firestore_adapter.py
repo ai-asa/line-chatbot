@@ -35,7 +35,7 @@ class FirestoreAdapter:
         ref_userIds = db.collection('userIds').document(user_id)
         ref_userIds.set(data, merge=True)
 
-    def set_new_sub(self, db, user_id, botType, new_status=None, pending_action=None):
+    def set_new_sub(self, db, user_id, botType, new_status=None):
         """
         ・トライアルプランからの切り替え対応
         / 現在のプランを取得し、トライアルプランの場合はisTrialValidをFalseにする
@@ -43,17 +43,19 @@ class FirestoreAdapter:
         """
         user_ref = db.collection('userIds').document(user_id)
         data = {
-            "current_sub_status": new_status,
-            "pending_action": pending_action,
-            "isTrialValid": True,
-            "botType": botType
+            "botType": botType,
+            "isTrialValid": True
         }
+        
+        # new_statusが指定されている場合のみ更新
+        if new_status is not None:
+            data["current_sub_status"] = new_status
         
         # 現在トライアルプランの場合の処理
         doc = user_ref.get()
         if doc.exists:
             user_data = doc.to_dict()
-            current_sub_status = user_data.get('current_sub_status', 'free')
+            current_sub_status = user_data.get('current_sub_status')
             if current_sub_status == 'try':
                 data['isTrialValid'] = False
                 
@@ -158,10 +160,28 @@ class FirestoreAdapter:
         messages = [snapshot.to_dict() for snapshot in snapshots]
         return messages
 
+    def _get_initial_fields(self):
+        """
+        ユーザーデータの初期フィールドを返します。
+        """
+        return {
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "current_sub_status": "free",
+            "next_sub_status": None,
+            "plan_change_date": None,
+            "botType": "fr",
+            "pending_action": None,
+            "trial_start": None,
+            "trial_end": None,
+            "isTrialValid": True,
+            "conversations": []
+        }
+
     def get_user_data(self, db, user_id, data_limit):
         """
         指定した user_id に紐づくすべてのデータを取得します。
         サブステータスのチェックと更新（get_sub_status の処理）も含めています。
+        必要なフィールドが欠けている場合は、初期値で補完します。
         """
         user_ref = db.collection('userIds').document(user_id)
         doc = user_ref.get()
@@ -169,6 +189,15 @@ class FirestoreAdapter:
         if doc.exists:
             user_data = doc.to_dict()
             update_data = {}  # 更新データを格納する辞書
+            
+            # 必要なフィールドの存在チェックと初期値設定
+            initial_fields = self._get_initial_fields()
+            
+            # 欠けているフィールドを検出し、update_dataに追加
+            for field, default_value in initial_fields.items():
+                if field not in user_data:
+                    update_data[field] = default_value
+                    user_data[field] = default_value
             
             # トライアル期限チェック処理
             current_sub_status = user_data.get('current_sub_status','free')
@@ -213,37 +242,14 @@ class FirestoreAdapter:
         else:
             # ユーザーデータが存在しない場合は初期化する
             self.initialize_user_data(db, user_id)
-            return {
-                "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "current_sub_status": "free",
-                "next_sub_status": None,
-                "plan_change_date": None,
-                "botType": "fr",
-                "pending_action": None,
-                "trial_start": None,
-                "trial_end": None,
-                "isTrialValid": True,
-                "conversations": []
-            }
+            return self._get_initial_fields()
 
     def initialize_user_data(self, db, user_id):
         """
         指定した user_id の完全なデータ構造を初期化します。
         既に存在するフィールドは上書きされません。
         """
-        initial_data = {
-            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "current_sub_status": "free",
-            "next_sub_status": None,
-            "plan_change_date": None,
-            "botType": "fr",
-            "pending_action": None,
-            "trial_start": None,
-            "trial_end": None,
-            "isTrialValid": True,
-            "conversations": []
-        }
-
+        initial_data = self._get_initial_fields()
         user_ref = db.collection('userIds').document(user_id)
         # 既存のデータを上書きしないように merge=True を指定
         user_ref.set(initial_data, merge=True)

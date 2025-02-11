@@ -5,9 +5,15 @@ import logging
 import datetime
 
 class StripeAdapter:
+    # PRICE_IDS = {
+    #     '980': 'price_1QDau2GUmbNfqrzFFvHVvoaz',
+    #     '1980': 'price_1QDaxQGUmbNfqrzFniNnEiyF',
+    #     '3980': 'price_1QNPiCRo65d8y4fNwGGoKq6y'
+    # }
+    # テスト用
     PRICE_IDS = {
-        '980': 'price_1QDau2GUmbNfqrzFFvHVvoaz',
-        '1980': 'price_1QDaxQGUmbNfqrzFniNnEiyF',
+        '980': 'price_1QNPhlRo65d8y4fN7jsiQwmf',
+        '1980': 'price_1QNPhyRo65d8y4fNmYAj1ZSP',
         '3980': 'price_1QNPiCRo65d8y4fNwGGoKq6y'
     }
 

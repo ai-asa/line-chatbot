@@ -51,9 +51,15 @@ PLAN_NAMES = {
     'free': 'フリープラン',
     'try': 'トライアルプラン'
 }
+# PRICE_IDS = {
+#     'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
+#     'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
+#     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
+# }
+# テスト用
 PRICE_IDS = {
-    'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
-    'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
+    'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
+    'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
 }
 PLAN_ORDER = ['free', '980', '1980', '3980']
@@ -176,8 +182,13 @@ def line_event_process(request_json):
     results = []
     for event in request_json["events"]:
         eventType = event['type']
-        replyToken = event['replyToken']
         userId = event['source']['userId']
+        try:
+            replyToken = event['replyToken']
+        except Exception as e:
+            replyToken = None
+            print(e)
+
         user_data = fa.get_user_data(db,userId,data_limit)
         if eventType == "message":
             result = event_message(event,replyToken,userId,user_data)
@@ -403,7 +414,7 @@ class RegStripe:
             return ['【解約予約用URL】\nご契約プランの解約をご希望の場合は以下のURLから手続きください。', sa.create_cancel_session(self.userId), '※※※※※※※※※※※\n解約につき以下の点にご注意ください。\n\n・解約は当契約月の最終日に完了します\n\n・解約完了までは引き続き現在のプランをご利用可能です\n\n・プラン変更はできなくなります。解約完了後に再度ご契約ください\n\n※※※※※※※※※※※']
 
     def new_sub(self,desired_plan):
-        return ["【ご契約用URL】\n以下のURLからご契約手続きを進めてください。\n\n" + sa.create_checkout_session(self.userId, desired_plan),'ご契約中の無料トライアルは解約されます']
+        return ["【ご契約用URL】\n以下のURLからご契約手続きを進めてください。\n\n" + sa.create_checkout_session(self.userId, desired_plan),'ご契約が完了すると、無料トライアルは解除されます']
 
     def upgrade_sub(self,action,next_plan,desired_plan):
         if next_plan == 'free':
@@ -426,14 +437,13 @@ class messageText:
         self.userData = user_data
     
     def res_text(self):
-        isTrialValid = self.userData['isTrialValid']
         currentPlan = self.userData['current_sub_status']
         botType = self.userData['botType']
         if currentPlan == 'free':
             return ['チャット機能をご利用いただくには、無料トライアルか有料プランへのご契約が必要です。', 'メニューから「プランの変更・契約」をタップしてご確認ください。']
-        if isTrialValid and currentPlan == 'try' or currentPlan == '980':
+        if currentPlan == '980':
             return self.processBegin(botType)
-        elif isTrialValid and currentPlan == 'try' or currentPlan == '1980':
+        elif currentPlan == 'try' or currentPlan == '1980':
             return self.processMiddle(botType)
     
     def processBegin(self,botType):
