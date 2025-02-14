@@ -25,7 +25,8 @@ class FirestoreAdapter:
     def set_sub_status(self, db, user_id, current_status, next_status=None, plan_change_date=None,pending_action=None):
         data = {
             "current_sub_status": current_status,
-            "pending_action": pending_action
+            "pending_action": pending_action,
+            "original_sub_status": current_status
         }
         if next_status:
             data["next_sub_status"] = next_status
@@ -50,6 +51,7 @@ class FirestoreAdapter:
         # new_statusが指定されている場合のみ更新
         if new_status is not None:
             data["current_sub_status"] = new_status
+            data["original_sub_status"] = new_status
         
         # 現在トライアルプランの場合の処理
         doc = user_ref.get()
@@ -174,7 +176,8 @@ class FirestoreAdapter:
             "trial_start": None,
             "trial_end": None,
             "isTrialValid": True,
-            "conversations": []
+            "conversations": [],
+            "original_sub_status": "free"
         }
 
     def get_user_data(self, db, user_id, data_limit):
@@ -198,6 +201,9 @@ class FirestoreAdapter:
                 if field not in user_data:
                     update_data[field] = default_value
                     user_data[field] = default_value
+                    if field == 'original_sub_status':
+                        update_data[field] = user_data.get('current_sub_status','free')
+                        user_data[field] = user_data.get('current_sub_status','free')
             
             # トライアル期限チェック処理
             current_sub_status = user_data.get('current_sub_status','free')
@@ -213,8 +219,7 @@ class FirestoreAdapter:
                 if  now >= trial_end:
                     update_data.update({
                         'current_sub_status': original_sub_status,
-                        'isTrialValid': False,
-                        'original_sub_status': firestore.DELETE_FIELD
+                        'isTrialValid': False
                     })
                     user_data['current_sub_status'] = original_sub_status
                     user_data['isTrialValid'] = False
@@ -265,21 +270,13 @@ class FirestoreAdapter:
         """
         now = datetime.datetime.now(datetime.timezone.utc)
         trial_end = now + datetime.timedelta(minutes=3)
-        # 元のステータスを取得し、保存する
-        user_ref = db.collection('userIds').document(user_id)
-        doc = user_ref.get()
-        original_sub_status = 'free'
-        if doc.exists:
-            user_data = doc.to_dict()
-            original_sub_status = user_data.get('current_sub_status','free')
 
         # データベース保存用のデータ
         data = {
             "current_sub_status": "try",
             "pending_action": None,
             "trial_start": now.isoformat(),
-            "trial_end": trial_end.isoformat(),
-            "original_sub_status": original_sub_status
+            "trial_end": trial_end.isoformat()
         }
         
         user_ref = db.collection('userIds').document(user_id)
