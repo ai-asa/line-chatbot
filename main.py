@@ -104,7 +104,7 @@ def reg_sub(request_json):
     #     return False
 
 def reg_sub_text(new_plan):
-    return [f'【ご契約通知】\n「{PLAN_NAMES[new_plan]}」へのご契約が完了しました。\n\nご利用いただき誠にありがとうございます。']
+    return [f'【ご契約通知】\n「{PLAN_NAMES[new_plan]}」へのご契約が完了しました。\n\nご利用いただき誠にありがとうございます']
 
 def update_sub(request_json):
     # try:
@@ -135,7 +135,7 @@ def res_cancel(sub,userId):
     # Firestoreの状態を更新（next_sub_status と plan_change_date を設定）
     fa.set_sub_status(db,userId,current_status=cu_sta,next_status='free',plan_change_date=plan_period)
 
-    return [f'【解約予約通知】\nご契約プランの解約予約が完了しました。\n\n現在のプランは{plan_period.strftime("%Y年%m月%d日 %H:%M:%S")}までご利用可能です。']
+    return [f'【解約予約通知】\nご契約プランの解約予約が完了しました\n\n現在のプランは{plan_period.strftime("%Y年%m月%d日 %H:%M:%S")}までご利用可能です']
 
 def ud_grade(sub,userId,pre_ats):
     old_price_id = pre_ats['items']['data'][0]['price']['id']
@@ -154,13 +154,13 @@ def ud_grade(sub,userId,pre_ats):
 def upgrade_fs_sub(userId,new_plan):
     fa.set_botType(db, userId, 'fr')
     fa.set_sub_status(db,userId,current_status=new_plan)
-    return [f'【プラン変更通知】\n「{PLAN_NAMES[new_plan]}」への変更が完了しました。\n\nご利用いただき誠にありがとうございます。']
+    return [f'【プラン変更通知】\n「{PLAN_NAMES[new_plan]}」への変更が完了しました。\n\nご利用いただき誠にありがとうございます']
 
 def downgrade_fs_sub(sub,userId,old_plan,new_plan):
     plan_change_date = datetime.datetime.fromtimestamp(sub['current_period_end'], datetime.timezone.utc)
     fa.set_botType(db, userId, 'fr')
     fa.set_sub_status(db,userId,current_status=old_plan,next_status=new_plan,plan_change_date=plan_change_date)
-    return [f'【プラン変更通知】\n「{PLAN_NAMES[new_plan]}」への変更が予約されました。\n\n現在のプランは{plan_change_date.strftime("%Y年%m月%d日 %H:%M:%S")}までご利用いただけます。']
+    return [f'【プラン変更通知】\n「{PLAN_NAMES[new_plan]}」への変更が予約されました。\n\n現在のプランは{plan_change_date.strftime("%Y年%m月%d日 %H:%M:%S")}までご利用いただけます']
 
 def del_sub(request_json):
     # try:
@@ -176,7 +176,7 @@ def del_sub(request_json):
     #     return False
 
 def del_sub_text():
-    return ['【解約通知】\nご契約プランの解約が完了しました。\n\nご利用いただき誠にありがとうございました。\n\n現在のプランはフリープランです。']
+    return ['【解約通知】\nご契約プランの解約が完了しました\n\nご利用いただき誠にありがとうございました','現在のプランはフリープランです']
 
 def line_event_process(request_json):
     results = []
@@ -208,7 +208,7 @@ def event_message(event,replyToken,userId,user_data):
     if mesType == "text":
         res = message_process(event,userId,user_data)
     else:
-        res = ["テキストメッセージ以外には対応していません。"]
+        res = ["テキストメッセージ以外には対応していません"]
     la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
     return True
     # except Exception as e:
@@ -248,7 +248,7 @@ def exec_start_trial(userId):
     trial_data = fa.set_trial_period(db,userId)
     trial_start = trial_data['trial_start']
     trial_end = trial_data['trial_end']
-    return ["【開始通知】\n無料トライアルが開始されました。", f"期間は{trial_start}から{trial_end}までです。","期間中は全ての機能をご利用いただけます", "ご利用いただき誠にありがとうございます。"]
+    return ["【開始通知】\n無料トライアルが開始されました", f"期間は{trial_start}から{trial_end}までです","期間中は中級プランと同様の機能をご利用いただけます", "ご利用いただき誠にありがとうございます"]
 
 def exec_upgrade_sub(sub_id,new_price_id,userId,pending_action):
     sa.upgrade_subscription(sub_id, new_price_id)
@@ -264,7 +264,7 @@ def exec_downgrade_sub(sub_id,new_price_id,userId,pending_action,user_data):
 
 def cancel_update_sub(userId):
     fa.clear_pending_action(db, userId)
-    return ['操作をキャンセルしました。']
+    return ['操作をキャンセルしました']
 
 def event_follow(event,replyToken,userId):
     # user_data = fa.get_user_data(db,userId,data_limit)
@@ -286,7 +286,7 @@ def event_postback(event,replyToken,userId,user_data):
     elif postType == 'tab':
         return True
     else:
-        res = ["現在開発中のメニューです。今後の更新にご期待ください。"]
+        res = ["現在開発中のメニューです。今後の更新にご期待ください"]
     # try:
     la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
     return True
@@ -310,27 +310,27 @@ def mode_change(userId,postType,user_data):
 
 def mode_kn(current_plan):
     if current_plan == 'free':
-        return False, ["本機能は各種プランへご契約いただくことでご利用いただけます。"]
+        return False, ["本機能は各種プランへご契約いただくことでご利用いただけます"]
     else:
-        return True, ["【モード変更】\n保険の知識・提案方法に関して一問一答でお答えします。"]
+        return True, ["【モード変更】\nゼロコンAIが保険の知識・提案方法に関して一問一答でお答えします"]
 
 def mode_qa(current_plan):
     if current_plan in ['free','980']:
-        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます。"]
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
-        return True, ["【モード変更】\n保険に関するQAデータベースに基づいてお答えします。"]
+        return True, ["【モード変更】\nゼロコンAIが保険に関するQAデータベースに基づいてお答えします"]
     
 def mode_yo(current_plan):
     if current_plan in ['free','980']:
-        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます。"]
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
-        return True, ["【モード変更】\n知りたい情報についてYoutube動画をお調べします。"]
+        return True, ["【モード変更】\nゼロコンAIが知りたい情報についてYoutube動画をお調べします"]
     
 def mode_gs(current_plan):
     if current_plan in ['free','980']:
-        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます。"]
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
-        return True, ["【モード変更】\n保険提案に関する自由度の高い相談に対応します。"]
+        return True, ["【モード変更】\nゼロコンAIが会話形式で様々な質問、ご相談に対応します"]
 
 class RegStripe:
     def __init__(self,event,postType,replyToken,userId,user_data):
@@ -342,15 +342,16 @@ class RegStripe:
     
     def stripe_post_process(self):
         current_plan = self.user_data['current_sub_status']
+        original_plan = self.user_data['original_sub_status']
         next_plan = self.user_data['next_sub_status']
         isTrialValid = self.user_data['isTrialValid']
-        action = self.det_sub_act(current_plan, next_plan, self.postType)
+        action = self.det_sub_act(current_plan, original_plan, next_plan, self.postType)
         if action == 'free':
             return self.cancel_sub(current_plan,next_plan)
         elif action == 'start_trial':
             return self.start_trial(action,self.postType,isTrialValid)
         elif action == 'invalid_trial':
-            return ['有料プランから無料トライアルへの変更はできません。']
+            return ['有料プランから無料トライアルへの変更はできません']
         elif action == 'new_subscription':
             return self.new_sub(self.postType)
         elif action == 'upgrade':
@@ -358,17 +359,17 @@ class RegStripe:
         elif action == 'downgrade':
             return self.downgrade_sub(action,next_plan,self.postType)
         elif action == 'already_resv':
-            return ['既に選択されたプランへの変更を予約済みです。']
+            return ['既に選択されたプランへの変更を予約済みです']
         elif action == 'downgrade_resv':
-            return [f'「{PLAN_NAMES[next_plan]}」への変更が予約済みのため、現在プラン変更をお受けできません。']
+            return [f'「{PLAN_NAMES[next_plan]}」への変更が予約済みのため、現在プラン変更をお受けできません']
         elif action == 'already_subscribed':
-            return ['既に選択されたプランにご契約済みです。']
+            return ['既に選択されたプランにご契約済みです']
         else:
-            return ['不正な操作です。']
+            return ['不正な操作です']
 
-    def det_sub_act(self, current_plan, next_plan, desired_plan):
+    def det_sub_act(self, current_plan, original_plan, next_plan, desired_plan):
         plan_order = ['free', 'try', '980', '1980', '3980']
-        current_index = plan_order.index(current_plan)
+        current_index = plan_order.index(original_plan)
         if next_plan is None:
             next_index = 6
         else:
@@ -377,7 +378,7 @@ class RegStripe:
 
         if desired_plan == 'free':
             return 'free'
-        elif current_plan == 'free' or current_plan == '980' and desired_plan == 'try':
+        elif (current_plan == 'free' or current_plan == '980') and desired_plan == 'try':
             return 'start_trial'
         elif desired_plan == 'try' and current_index > desired_index:
             return 'invalid_trial'
@@ -387,7 +388,7 @@ class RegStripe:
             return 'already_resv'
         elif next_plan != 'free' and current_index > next_index:
             return 'downgrade_resv'
-        elif current_plan == 'free' or current_plan == 'try' and desired_plan in ['980', '1980', '3980']:
+        elif (original_plan == 'free' or original_plan == 'try') and desired_plan in ['980', '1980', '3980']:
             return 'new_subscription'
         elif current_index < desired_index:
             return 'upgrade'
@@ -399,36 +400,36 @@ class RegStripe:
     def start_trial(self,action,desired_plan,isTrialValid):
         if isTrialValid:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【開始確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※\n\n・「はい」と返信いただくと、３日間の無料トライアルが開始されます\n\n※※※※※※※※※※※","よろしければ「はい」と返信してください。"]
+            return [f"【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください"]
         else:
-            return ['トライアル期間が終了しています。']
+            return ['トライアル期間が終了しています']
 
     def cancel_sub(self,current_plan,next_plan):
         if current_plan == 'free':
-            return ['ご契約済みのプランはありません。']
+            return ['ご契約済みのプランはありません']
         elif current_plan == 'try':
-            return ['現在トライアルご契約中であり、ご契約済みの有料プランはありません。']
+            return ['現在トライアルご契約中であり、ご契約済みの有料プランはありません']
         elif next_plan == 'free':
-            return ['ご契約プランの解約予約は完了しています。']
+            return ['ご契約プランの解約予約は完了しています']
         else:
-            return ['【解約予約用URL】\nご契約プランの解約をご希望の場合は以下のURLから手続きください。', sa.create_cancel_session(self.userId), '※※※※※※※※※※※\n解約につき以下の点にご注意ください。\n\n・解約は当契約月の最終日に完了します\n\n・解約完了までは引き続き現在のプランをご利用可能です\n\n・プラン変更はできなくなります。解約完了後に再度ご契約ください\n\n※※※※※※※※※※※']
+            return ['【解約予約用URL】\nご契約プランの解約をご希望の場合は以下のURLから手続きください', sa.create_cancel_session(self.userId), '※※※※※※※※※※※※※※※※※※※※※※\n解約につき以下の点にご注意ください\n\n・解約は当契約月の最終日に完了します\n\n・解約完了までは引き続き現在のプランをご利用可能です\n\n・プラン変更はできなくなります。解約完了後に再度ご契約ください\n\n※※※※※※※※※※※※※※※※※※※※※※']
 
     def new_sub(self,desired_plan):
-        return ["【ご契約用URL】\n以下のURLからご契約手続きを進めてください。\n\n" + sa.create_checkout_session(self.userId, desired_plan),'ご契約が完了すると、無料トライアルは解除されます']
+        return ["【ご契約用URL】\n以下のURLからご契約手続きを進めてください\n\n" + sa.create_checkout_session(self.userId, desired_plan),'無料トライアルをご利用の場合はご契約が完了次第、解除されます']
 
     def upgrade_sub(self,action,next_plan,desired_plan):
         if next_plan == 'free':
-            return ['【ご連絡】\n解約予約されているため、プランの変更はできません。\n\n解約完了後に再度ご契約ください。']
+            return ['【ご連絡】\n解約予約されているため、プランの変更はできません\n\n解約完了後に再度ご契約ください']
         else:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご契約内容の変更確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更します。","※※※※※※※※※※※\n\n・「はい」と返信いただくと、即時契約手続きが実行されます\n\n・本契約月から料金が発生します\n\n※※※※※※※※※※※","よろしければ「はい」と返信してください。"]
+            return [f"【ご契約内容の変更確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更します","※※※※※※※※※※※※※※※※※※※※※※\n\n・「はい」と返信いただくと、即時契約手続きが実行されます\n\n・本契約月から料金が発生します\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください"]
 
     def downgrade_sub(self,action,next_plan,desired_plan):
         if next_plan == 'free':
-            return ['【ご連絡】\n解約予約されているため、プランの変更はできません。\n\n解約完了後に再度ご契約ください。']
+            return ['【ご連絡】\n解約予約されているため、プランの変更はできません\n\n解約完了後に再度ご契約ください']
         else:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご契約内容の変更予約の確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更予約します。","※※※※※※※※※※※\nプラン変更予約につき以下の点にご注意ください。\n\n・本契約月は現在プランの料金が適用され、翌契約月から予約プランの料金が適用されます\n\n・プラン変更の完了まで、引き続き現在プランの機能をご利用可能です\n\n・プラン変更が完了するまで、他プランへの変更はできません\n\n※※※※※※※※※※※","よろしければ「はい」と返信してください。"]
+            return [f"【ご契約内容の変更予約の確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更予約します","※※※※※※※※※※※※※※※※※※※※※※\nプラン変更予約につき以下の点にご注意ください\n\n・本契約月は現在プランの料金が適用され、翌契約月から予約プランの料金が適用されます\n\n・プラン変更の完了まで、引き続き現在プランの機能をご利用可能です\n\n・プラン変更が完了するまで、他プランへの変更はできません\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください"]
 
 class messageText:
     def __init__(self,event,userId,userText,user_data):
@@ -440,7 +441,7 @@ class messageText:
         currentPlan = self.userData['current_sub_status']
         botType = self.userData['botType']
         if currentPlan == 'free':
-            return ['チャット機能をご利用いただくには、無料トライアルか有料プランへのご契約が必要です。', 'メニューから「プランの変更・契約」をタップしてご確認ください。']
+            return ['チャット機能をご利用いただくには、無料トライアルか有料プランへのご契約が必要です', 'メニューから「プランの変更・契約」をタップしてご確認ください']
         if currentPlan == '980':
             return self.processBegin(botType)
         elif currentPlan == 'try' or currentPlan == '1980':
@@ -448,21 +449,21 @@ class messageText:
     
     def processBegin(self,botType):
         if botType == "fr":
-            return ['メニューからモードを選択してください。']
+            return ['メニューからモードを選択してください']
         elif botType == "kn":
             return self.res_kn()
         elif botType == "qa":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります。']
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
         elif botType == "yo":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります。']
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
         elif botType == "gs":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります。']
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
         else:
-            return ['エラー：無効なモードを指定しています。']
+            return ['エラー：無効なモードを指定しています']
     
     def processMiddle(self,botType):
         if botType == "fr":
-            return ['メニューからモードを選択してください。']
+            return ['メニューからモードを選択してください']
         elif botType == "kn":
             return self.res_kn()
         elif botType == "qa":
@@ -472,7 +473,7 @@ class messageText:
         elif botType == "gs":
             return self.res_gs()
         else:
-            return ['エラー：無効なモードを指定しています。']
+            return ['エラー：無効なモードを指定しています']
 
     def res_kn(self):
         query_type = self.norm_query_type(oa.openai_chat("gpt-4o-mini",gp.kn_class_prompt(self.userText)))
@@ -491,17 +492,17 @@ class messageText:
             return None
 
     def res_invalid_query(self):
-        return ["無効な質問です。質問内容を変えてもう一度送信してください。"]
+        return ["無効な質問です。質問内容を変えてもう一度送信してください"]
 
     def res_valid_query(self,query_type):
         cont  = self.norm_res_cont(oa.openai_chat("gpt-4o",gp.kl_response_prompt(query_type,self.userText)))
         if cont is not None:
             cont = [cont]
             # perse_cont = [line for line in cont.split('\n') if line]
-            cont.append("※AIは誤った情報を回答をする場合があります。\n個別の保険商品などはご自身で調べ、正しい情報を得るようにしてください。")
+            cont.append("※AIは誤った情報を回答をする場合があります。\n個別の保険商品などはご自身で調べ、正しい情報を得るようにしてください")
             return cont
         else:
-            return ["申し訳ございません。適切な応答を生成できませんでした。"]
+            return ["申し訳ございません。適切な応答を生成できませんでした"]
 
     def norm_res_cont(self,text):
         pattern = r'<response>(.*?)</response>'
@@ -516,7 +517,7 @@ class messageText:
         if q and a:
             qa_text = "Q." + q + "\nA." + a
         else:
-            qa_text = ["ユーザーの質問に関連するQA情報はありません。"]
+            qa_text = ["ユーザーの質問に関連するQA情報はありません"]
         res = self.norm_answer_cont(oa.openai_chat("gpt-4o",gp.get_qa_prompt(self.userText,qa_text)))
         if res is not None:
             res = [res]
@@ -524,7 +525,7 @@ class messageText:
             res.append("参考QA:\n" + url)
             return res
         else:
-            res = ["応答の生成に失敗しました。再度、ご質問をお伝えください。"]
+            res = ["応答の生成に失敗しました。再度、ご質問をお伝えください"]
             return res
     
     def norm_answer_cont(self,text):
@@ -538,18 +539,18 @@ class messageText:
         prompt = gp.get_searchYoutube_prompt(self.userText)
         searchTerms = self.norm_term_cont(oa.openai_chat("gpt-4o-mini",prompt))
         if not searchTerms:
-            res = ["検索ワードの生成に失敗しました。再度、ご要望をお伝えください。"]
+            res = ["検索ワードの生成に失敗しました。再度、ご要望をお伝えください"]
             return res
         # youtube data api にて検索結果を表示
         result,textResult = ya.search_videos(searchTerms)
         if not result:
-            res = ["YouTube動画検索に失敗しました。再度、ご要望をお伝えください。"]
+            res = ["YouTube動画検索に失敗しました。再度、ご要望をお伝えください"]
             return res
         
         # キューの内容に最も適切な検索結果を判断
         videoNum = self.norm_video_num(oa.openai_chat("gpt-4o-mini",gp.get_judg_prompt(self.userText, textResult)))
         if not videoNum:
-            res = ["YouTube動画検索に失敗しました。再度、ご要望をお伝えください。"]
+            res = ["YouTube動画検索に失敗しました。再度、ご要望をお伝えください"]
             return res
         res = self.gen_video_res(result,videoNum,searchTerms)
         return res
@@ -573,7 +574,7 @@ class messageText:
 
     def gen_video_res(self,all_videos,videoNum,searchTerms) -> list:
         res = []
-        res.append("以下のキーワードでYouTube動画を検索しました。\n\n"+"\n".join(searchTerms)+"\n\n検索結果は以下の通りです。")
+        res.append("以下のキーワードでYouTube動画を検索しました\n\n"+"\n".join(searchTerms)+"\n\n検索結果は以下の通りです")
         # 動画番号をキー、URLを値とする辞書を作成
         video_dict = {video["num"]: video["url"] for video in all_videos}
         for num in videoNum:
@@ -593,7 +594,7 @@ class messageText:
             # perse_res = [line for line in res.split('\n') if line]
             return res
         else:
-            return ["応答の取得に失敗しました。再度、ご要望をお伝えください。"]
+            return ["応答の取得に失敗しました。再度、ご要望をお伝えください"]
     
     def get_convs_text(self,convs):
         text_list = []
@@ -620,18 +621,18 @@ class messageText:
 #     print("searchYoutubeResponse:",response)
 #     searchTerms = extract_searchTerm_content(response)
 #     if not searchTerms:
-#         text = "検索ワードの生成に失敗しました。再度、ご要望をお伝えください。"
+#         text = "検索ワードの生成に失敗しました。再度、ご要望をお伝えください"
 #     # youtube data api にて検索結果を表示
 #     result,textResult = ya.search_videos(searchTerms)
 #     if not result:
-#         text = "YouTube動画検索に失敗しました。再度、ご要望をお伝えください。"
+#         text = "YouTube動画検索に失敗しました。再度、ご要望をお伝えください"
 #     # キューの内容に最も適切な検索結果を判断
 #     prompt = gp.get_judg_prompt(userText, textResult)
 #     response = oa.openai_chat("gpt-4o-mini",prompt)
 #     print("judgeResponse:",response)
 #     videoNum = extract_video_numbers(response)
 #     if not videoNum:
-#         text = "YouTube動画検索に失敗しました。再度、ご要望をお伝えください。"
+#         text = "YouTube動画検索に失敗しました。再度、ご要望をお伝えください"
 #     response_text = gen_response_text(result,videoNum,searchTerms)
 #     print("responseText:",response_text)
 
