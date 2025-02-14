@@ -65,7 +65,7 @@ class RichmenuController:
                     },
                     "action": {
                         "type": "postback",
-                        "data": "yo"
+                        "data": "gs"
                     }
                 },
                 {
@@ -89,7 +89,7 @@ class RichmenuController:
                     },
                     "action": {
                         "type": "postback",
-                        "data": "gs"
+                        "data": "yo"
                     }
                 },
                 {
