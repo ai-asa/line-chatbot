@@ -377,7 +377,7 @@ class RegStripe:
 
         if desired_plan == 'free':
             return 'free'
-        elif current_plan == 'free' or current_plan == '980' and desired_plan == 'try':
+        elif (current_plan == 'free' or current_plan == '980') and desired_plan == 'try':
             return 'start_trial'
         elif desired_plan == 'try' and current_index > desired_index:
             return 'invalid_trial'
@@ -387,7 +387,7 @@ class RegStripe:
             return 'already_resv'
         elif next_plan != 'free' and current_index > next_index:
             return 'downgrade_resv'
-        elif current_plan == 'free' or current_plan == 'try' and desired_plan in ['980', '1980', '3980']:
+        elif (current_plan == 'free' or current_plan == 'try') and desired_plan in ['980', '1980', '3980']:
             return 'new_subscription'
         elif current_index < desired_index:
             return 'upgrade'
