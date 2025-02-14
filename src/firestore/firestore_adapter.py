@@ -261,7 +261,7 @@ class FirestoreAdapter:
         データベースにはUTCで保存し、戻り値はJST形式で返します。
         """
         now = datetime.datetime.now(datetime.timezone.utc)
-        trial_end = now + datetime.timedelta(weeks=1)
+        trial_end = now + datetime.timedelta(minutes=3)
         
         # データベース保存用のデータ（UTC）
         data = {
