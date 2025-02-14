@@ -206,14 +206,17 @@ class FirestoreAdapter:
             next_sub_status = user_data.get('next_sub_status')
             plan_change_date_str = user_data.get('plan_change_date')
             now = datetime.datetime.now(datetime.timezone.utc)
+            # 元のステータスに戻す
+            original_sub_status = user_data.get('original_sub_status')
             if trial_end_str and  current_sub_status == 'try' and is_trial_valid:
                 trial_end = datetime.datetime.fromisoformat(trial_end_str)
                 if  now >= trial_end:
                     update_data.update({
-                        'current_sub_status': 'free',
-                        'isTrialValid': False
+                        'current_sub_status': original_sub_status,
+                        'isTrialValid': False,
+                        'original_sub_status': firestore.DELETE_FIELD
                     })
-                    user_data['current_sub_status'] = 'free'
+                    user_data['current_sub_status'] = original_sub_status
                     user_data['isTrialValid'] = False
             
             if plan_change_date_str and next_sub_status:
@@ -261,14 +264,22 @@ class FirestoreAdapter:
         データベースにはUTCで保存し、戻り値はJST形式で返します。
         """
         now = datetime.datetime.now(datetime.timezone.utc)
-        trial_end = now + datetime.timedelta(weeks=1)
-        
-        # データベース保存用のデータ（UTC）
+        trial_end = now + datetime.timedelta(minutes=3)
+        # 元のステータスを取得し、保存する
+        user_ref = db.collection('userIds').document(user_id)
+        doc = user_ref.get()
+        original_sub_status = 'free'
+        if doc.exists:
+            user_data = doc.to_dict()
+            original_sub_status = user_data.get('current_sub_status','free')
+
+        # データベース保存用のデータ
         data = {
             "current_sub_status": "try",
             "pending_action": None,
             "trial_start": now.isoformat(),
-            "trial_end": trial_end.isoformat()
+            "trial_end": trial_end.isoformat(),
+            "original_sub_status": original_sub_status
         }
         
         user_ref = db.collection('userIds').document(user_id)

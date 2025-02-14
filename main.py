@@ -377,7 +377,7 @@ class RegStripe:
 
         if desired_plan == 'free':
             return 'free'
-        elif current_plan == 'free' and desired_plan == 'try':
+        elif current_plan == 'free' or current_plan == '980' and desired_plan == 'try':
             return 'start_trial'
         elif desired_plan == 'try' and current_index > desired_index:
             return 'invalid_trial'
@@ -399,7 +399,7 @@ class RegStripe:
     def start_trial(self,action,desired_plan,isTrialValid):
         if isTrialValid:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【開始確認】\n１週間の無料トライアルを開始しますか？","※※※※※※※※※※※\n\n・「はい」と返信いただくと、１週間の無料トライアルが開始されます\n\n※※※※※※※※※※※","よろしければ「はい」と返信してください。"]
+            return [f"【開始確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※\n\n・「はい」と返信いただくと、３日間の無料トライアルが開始されます\n\n※※※※※※※※※※※","よろしければ「はい」と返信してください。"]
         else:
             return ['トライアル期間が終了しています。']
 
