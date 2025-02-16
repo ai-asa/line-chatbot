@@ -265,11 +265,11 @@ class FirestoreAdapter:
     def set_trial_period(self, db, user_id):
         """
         ユーザーのトライアル期間を設定します。
-        trial_start に現在時刻を、trial_end に1週間後の時刻を設定します。
+        trial_start に現在時刻を、trial_end に3日後の時刻を設定します。
         データベースにはUTCで保存し、戻り値はJST形式で返します。
         """
         now = datetime.datetime.now(datetime.timezone.utc)
-        trial_end = now + datetime.timedelta(minutes=3)
+        trial_end = now + datetime.timedelta(days=3)
 
         # データベース保存用のデータ
         data = {
