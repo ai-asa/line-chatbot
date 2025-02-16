@@ -51,17 +51,17 @@ PLAN_NAMES = {
     'free': 'フリープラン',
     'try': 'トライアルプラン'
 }
-# PRICE_IDS = {
-#     'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
-#     'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
-#     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
-# }
-# テスト用
 PRICE_IDS = {
-    'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
-    'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+    'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
+    'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
 }
+# テスト用
+# PRICE_IDS = {
+#     'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
+#     'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+#     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
+# }
 PLAN_ORDER = ['free', '980', '1980', '3980']
 
 @functions_framework.http
