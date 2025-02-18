@@ -129,14 +129,31 @@ class FirestoreAdapter:
             ref_userIds.set(data, merge=True)
             return "fr"
 
-    def update_history(self, db, userId, speaker, message, data_limit):
-        new_message = {
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "speaker": speaker,
-            "content": message
-        }
+    def update_history(self, db, userId, data_limit, user=None, assistant=None):
+
         userIds_ref = db.collection('userIds').document(userId)
         conversations_ref = userIds_ref.collection('conversations')
+
+        base_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        if user:
+            user_message = {
+                "timestamp": base_time.isoformat(),
+                "speaker": 'user',
+                "content": user
+            }
+        if assistant:
+            assistant_message = {
+                "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
+                "speaker": 'assistant',
+                "content": assistant    
+            }
+        if user_message and assistant_message:
+            new_message = [user_message, assistant_message]
+        elif user_message:
+            new_message = user_message
+        elif assistant_message:
+            new_message = assistant_message
 
         # ユーザードキュメントが存在しない場合は初期化
         if not userIds_ref.get().exists:
@@ -150,7 +167,7 @@ class FirestoreAdapter:
 
         # メッセージの総数が指定数を超える場合、古いメッセージを削除
         if len(snapshots) > data_limit:
-            # 20件目以降のメッセージを取得（古いメッセージ）
+            # 10件目以降のメッセージを取得
             messages_to_delete = snapshots[data_limit:]
             # 古いメッセージを削除
             for snapshot in messages_to_delete:
@@ -177,7 +194,11 @@ class FirestoreAdapter:
             "trial_end": None,
             "isTrialValid": True,
             "conversations": [],
-            "original_sub_status": "free"
+            "original_sub_status": "free",
+            'isAlreadyRP': False,
+            'rp_setting': None,
+            'rp_history': [],
+            'isRetryRP': False
         }
 
     def get_user_data(self, db, user_id, data_limit):
@@ -294,3 +315,76 @@ class FirestoreAdapter:
             "trial_start": now_jst.strftime('%Y年%m月%d日%H時%M分'),
             "trial_end": trial_end_jst.strftime('%Y年%m月%d日%H時%M分')
         }
+
+    def reset_rp_history(self, db, user_id, isResetHistory=None, rp_setting=None, isAlreadyRP: bool = None, isRetryRP: bool = None):
+        """RPの会話履歴とRP設定をリセットする"""
+        doc_ref = db.collection('users').document(user_id)
+        update_data = {}
+        if isResetHistory:
+            update_data['rp_history'] = []
+        if rp_setting:
+            update_data['rp_setting'] = rp_setting
+        if isAlreadyRP:
+            update_data['isAlreadyRP'] = isAlreadyRP
+        if isRetryRP:
+            update_data['isRetryRP'] = isRetryRP
+        if update_data:
+            doc_ref.update(update_data)
+
+    def set_initial_rp(self, db, user_id, rp_setting):
+        """初めてのRP設定を保存する"""
+        doc_ref = db.collection('users').document(user_id)
+        doc_ref.update({
+            'isAlreadyRP': True,
+            'rp_setting': rp_setting,
+            'rp_history': []
+        })
+
+    def update_rp_history(self, db, userId, rp_data_limit, salesperson=None, customer=None):
+        userIds_ref = db.collection('userIds').document(userId)
+        history_ref = userIds_ref.collection('rp_history')
+
+        base_time = datetime.datetime.now(datetime.timezone.utc)
+        
+        if salesperson:
+            salesperson_message = {
+                "timestamp": base_time.isoformat(),
+                "speaker": 'salesperson',
+                "content": salesperson
+            }
+        if customer:
+            customer_message = {
+                "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
+                "speaker": 'customer',
+                "content": customer
+            }
+        if salesperson_message and customer_message:
+            new_message = [salesperson_message, customer_message]
+        elif salesperson_message:
+            new_message = salesperson_message
+        elif customer_message:
+            new_message = customer_message
+
+        # ユーザードキュメントが存在しない場合は初期化
+        if not userIds_ref.get().exists:
+            self.initialize_user_data(db, userId)
+
+        # rp_historyサブコレクションに新しいメッセージを追加
+        history_ref.add(new_message)
+
+        # メッセージを timestamp の降順で取得
+        snapshots = history_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).get()
+
+        # メッセージの総数が指定数を超える場合、古いメッセージを削除
+        if len(snapshots) > rp_data_limit:
+            # 50件目以降のメッセージを取得
+            messages_to_delete = snapshots[rp_data_limit:]
+            # 古いメッセージを削除
+            for snapshot in messages_to_delete:
+                snapshot.reference.delete()
+
+    def get_rp_history(self, db, userId, rp_data_limit):
+        conversations_ref = db.collection('userIds').document(userId).collection('rp_history')
+        snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(rp_data_limit).get()
+        messages = [snapshot.to_dict() for snapshot in snapshots]
+        return messages

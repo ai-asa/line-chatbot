@@ -15,6 +15,7 @@ from src.openai.get_prompt import GetPrompt
 from src.rag.index_controller import IndexController
 from src.youtube.youtube_data_api_adapter import YoutubeDataApiAdapter
 from src.stripe.stripe_adapter import StripeAdapter
+import random
 
 load_dotenv()
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
@@ -39,6 +40,7 @@ db = firestore.client()
 config = configparser.ConfigParser()
 config.read('config.ini')
 data_limit = int(config.get('CONFIG', 'data_limit', fallback=10))
+rp_data_limit = int(config.get('CONFIG', 'rp_data_limit', fallback=50))
 token_limit = int(config.get('CONFIG', 'token_limit', fallback=2000))
 retry_limit = int(config.get('CONFIG', 'retry_limit', fallback=5))
 index_path = config.get('INDEX', 'index_path', fallback='./data/index/')
@@ -63,6 +65,71 @@ PRICE_IDS = {
 #     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
 # }
 PLAN_ORDER = ['free', '980', '1980', '3980']
+
+# RPの設定用の定数
+RP_AGES = [
+    "25歳", "30歳", "35歳", "40歳", "45歳", "50歳", "55歳", "60歳"
+]
+
+RP_GENDERS = ["男性", "女性"]
+
+RP_ANNUAL_INCOMES = [
+    "300万円", "400万円", "500万円", "600万円", "700万円", 
+    "800万円", "1000万円", "1200万円", "1500万円"
+]
+
+RP_FAMILY_STRUCTURES = [
+    "独身", "既婚・子供なし", "既婚・子供1人", "既婚・子供2人",
+    "既婚・子供3人", "シングルペアレント・子供1人", "シングルペアレント・子供2人"
+]
+
+RP_LOCATIONS = [
+    "都内", "関東", "千葉県", "埼玉県", "大阪府", 
+    "京都府", "愛知県", "福岡県", "北海道"
+]
+
+RP_INSURANCE_STATUS = [
+    "保険未加入", 
+    "生命保険のみ加入", 
+    "医療保険のみ加入",
+    "生命保険・医療保険に加入",
+    "生命保険・医療保険・がん保険に加入"
+]
+
+RP_INSURANCE_DETAILS = [
+    "月額保険料：5,000円", 
+    "月額保険料：10,000円",
+    "月額保険料：15,000円",
+    "月額保険料：20,000円",
+    "月額保険料：30,000円"
+]
+
+RP_PERSONALITIES = [
+    "慎重派・保守的", "積極的・チャレンジ精神旺盛",
+    "計画的・堅実", "直感的・決断が早い",
+    "分析的・理論的", "感情的・共感力が高い",
+    "リスク回避型", "バランス重視型"
+]
+
+def generate_rp_setting():
+    """RPの設定をランダムに生成する"""
+    setting = {
+        "年齢": random.choice(RP_AGES),
+        "性別": random.choice(RP_GENDERS),
+        "世帯年収": random.choice(RP_ANNUAL_INCOMES),
+        "家族構成": random.choice(RP_FAMILY_STRUCTURES),
+        "居住地": random.choice(RP_LOCATIONS),
+        "保険加入状況": random.choice(RP_INSURANCE_STATUS),
+        "現在の保険料": random.choice(RP_INSURANCE_DETAILS),
+        "性格": random.choice(RP_PERSONALITIES)
+    }
+    
+    # 設定を文字列にフォーマット
+    setting_text = "【お客様設定】\n"
+    for key, value in setting.items():
+        setting_text += f"■{key}：{value}\n"
+    
+    return setting_text
 
 @functions_framework.http
 def line_chatbot(request):
@@ -218,8 +285,11 @@ def event_message(event,replyToken,userId,user_data):
 def message_process(event,userId,user_data):
     mesText = event['message']['text']
     pending_action = user_data['pending_action']
+    isRetryRP = user_data['isRetryRP']
     if pending_action:
         return sub_act(pending_action,mesText,userId,user_data)
+    if isRetryRP:
+        return retry_rp(userId,mesText,user_data)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
@@ -229,6 +299,18 @@ def sub_act(pending_action,mesText,userId,user_data):
         return exec_update_sub(pending_action,userId,user_data)
     else:
         return cancel_update_sub(userId)
+
+def retry_rp(userId,mesText,user_data):
+    if mesText == 'はい':
+        rp_setting = user_data['rp_setting']
+        fa.reset_rp_history(db, userId, isResetHistory=True, isRetryRP=False)
+        return ["会話履歴をリセットし、同じ設定で再度営業ロープレを開始します。", f"以下の設定で営業ロープレを開始します\n\n{rp_setting}\n\n====ここから開始====","テキストを送信し、会話を開始してください..."]
+    else:
+        return close_rp(userId)
+    
+def close_rp(userId):
+    fa.reset_rp_history(db, userId, isResetHistory=True, isAlreadyRP=False, isRetryRP=False)
+    return ["営業ロープレを終了しました。お疲れさまでした", "繰り返し練習し、営業力を高めましょう！"]
 
 def exec_update_sub(pending_action,userId,user_data):
     if pending_action['desired_plan'] == 'try':
@@ -277,8 +359,14 @@ def event_unfollow(event,replyToken,userId):
     return True
 
 def event_postback(event,replyToken,userId,user_data):
+    pending_action = user_data['pending_action']
+    isRetryRP = user_data['isRetryRP']
+    if pending_action:
+        return cancel_update_sub(userId)
+    if isRetryRP:
+        return close_rp(userId)
     postType = event['postback']['data']
-    if postType in ['kn','qa','yo','gs']:
+    if postType in ['kn','qa','yo','gs','rps','rpr']:
         res = mode_change(userId,postType,user_data)
     elif postType in ['980','1980','3980','free','try']:
         rs = RegStripe(event,postType,replyToken,userId,user_data)
@@ -304,6 +392,10 @@ def mode_change(userId,postType,user_data):
         judg,text = mode_yo(current_plan)
     elif postType == "gs":
         judg,text = mode_gs(current_plan)
+    elif postType == "rps":
+        judg,text = mode_rps(current_plan,user_data)
+    elif postType == "rpr":
+        judg,text = mode_rpr(current_plan,user_data)
     if judg:
         fa.set_botType(db, userId, postType)
     return text
@@ -331,6 +423,58 @@ def mode_gs(current_plan):
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
         return True, ["【モード変更】\nゼロコンAIが会話形式で様々な質問、ご相談に対応します"]
+
+def mode_rps(current_plan,user_data):
+    if current_plan in ['free','980']:
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+    else:
+        return True, rps_text(user_data)
+    
+def mode_rpr(current_plan,user_data):
+    if current_plan in ['free','980']:
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+    else:
+        return True, rpr_text(user_data)
+    
+def rps_text(user_data):
+    """RPの設定を生成し、テキストを返す"""
+    # RP設定を生成
+    rp_setting = generate_rp_setting()
+    
+    if user_data['isAlreadyRP']:
+        # 会話履歴とRP設定更新
+        fa.reset_rp_history(db, user_data['userId'], isResetHistory=True, rp_setting=rp_setting)
+        return ["これまでの営業ロープレの会話履歴と設定をリセットします", f"以下の設定で新たに営業ロープレを開始します\n\n{rp_setting}\n\n====ここから開始====","テキストを送信し、会話を開始してください..."]
+    else:
+        fa.set_initial_rp(db, user_data['userId'], rp_setting)
+        return ["【モード変更】\nゼロコンAIを相手に営業トレーニングを開始します", "ゼロコンAIが演じる顧客に対し、保険営業を行ってください！", "メニューの「終了＆批評」ボタンをクリックするとロープレを終了し、あなたの営業の内容に対し専門的な批評を行います",  f"では、以下の設定で営業ロープレを開始します\n\n{rp_setting}\n\n====ここから開始====","テキストを送信し、会話を開始してください..."]
+
+def rpr_text(user_data):
+    """
+    営業ロープレの会話履歴を取得し、それを基にAIにて批評を行い、テキストを返す
+    """
+    if not user_data['isAlreadyRP']:
+        return ["営業ロープレは開始されていません", "営業ロープレを開始するには、メニューの「開始＆リセット」ボタンをクリックしてください"]
+    # 営業ロープレの会話履歴を取得
+    rp_history = user_data['rp_history']
+    # 営業ロープレの会話履歴を基にAIにて批評を行い、テキストを返す
+    res = norm_rpr_text(oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_history)))
+    text = []
+    if res == None:
+        text = ["営業ロープレを終了し、ゼロコンAIによる批評を行います","エラーにより、批評結果が取得できませんでした"]
+    else:
+        text = ["営業ロープレを終了し、ゼロコンAIによる批評を行います", "【ゼロコンAIによる批評】\n\n" + res]
+    restart_text = ["もう一度同じ設定で営業ロープレを開始しますか？", "「はい」と返信すると会話をリセットし、同じ設定で再度営業ロープレを開始します(「はい」以外の返信で終了します)"]
+    text.append(restart_text)
+    fa.reset_rp_history(db, user_data['userId'], isRetryRP=True)
+    return text
+
+def norm_rpr_text(text):
+    pattern = r'<response>(.*?)</response>'
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None
 
 class RegStripe:
     def __init__(self,event,postType,replyToken,userId,user_data):
@@ -400,7 +544,7 @@ class RegStripe:
     def start_trial(self,action,desired_plan,isTrialValid):
         if isTrialValid:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください"]
+            return [f"【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください(「はい」以外の返信でキャンセルします)"]
         else:
             return ['トライアル期間が終了しています']
 
@@ -422,7 +566,7 @@ class RegStripe:
             return ['【ご連絡】\n解約予約されているため、プランの変更はできません\n\n解約完了後に再度ご契約ください']
         else:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご契約内容の変更確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更します","※※※※※※※※※※※※※※※※※※※※※※\n\n・「はい」と返信いただくと、即時契約手続きが実行されます\n\n・本契約月から料金が発生します\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください"]
+            return [f"【ご契約内容の変更確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更します","※※※※※※※※※※※※※※※※※※※※※※\n\n・「はい」と返信いただくと、即時契約手続きが実行されます\n\n・本契約月から料金が発生します\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください(「はい」以外の返信でキャンセルします)"]
 
     def downgrade_sub(self,action,next_plan,desired_plan):
         if next_plan == 'free':
@@ -458,6 +602,10 @@ class messageText:
             return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
         elif botType == "gs":
             return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        elif botType == "rps":
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        elif botType == "rpr":
+            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
         else:
             return ['エラー：無効なモードを指定しています']
     
@@ -472,6 +620,8 @@ class messageText:
             return self.res_yo()
         elif botType == "gs":
             return self.res_gs()
+        elif botType == "rps":
+            return self.res_rps()
         else:
             return ['エラー：無効なモードを指定しています']
 
@@ -585,11 +735,11 @@ class messageText:
 
     def res_gs(self):
         convs = self.get_convs_text(self.userData['conversations'])
+        print("convs:",convs)
         res = self.norm_gs_res(oa.openai_chat("gpt-4o",gp.get_gs_prompt(convs,self.userText)))
         if res:
             # 会話履歴を更新する
-            fa.update_history(db,self.userId,"user",self.userText,data_limit)
-            fa.update_history(db,self.userId,"assistant",res,data_limit)
+            fa.update_history(db,self.userId,data_limit,user=self.userText,assistant=res)
             res = [res]
             # perse_res = [line for line in res.split('\n') if line]
             return res
@@ -613,7 +763,38 @@ class messageText:
         if match:
             return match.group(1).strip()
         return None
-
+    
+    def res_rps(self):
+        # 営業ロープレの会話履歴を取得
+        history_text = self.get_rphis_text(self.userData['rp_history'])
+        print("history_text:",history_text)
+        # 営業ロープレの会話履歴を基にAIにて営業ロープレを行い、テキストを返す
+        res = self.norm_rp_res(oa.openai_chat("gpt-4o",gp.get_rp_prompt(history_text,self.userText)))
+        if res:
+            # 会話履歴を更新する
+            fa.update_rp_history(db,self.userId,rp_data_limit,salesperson=self.userText,customer=res)
+            return res
+        else:
+            return ["応答の取得に失敗しました。再度、テキストを送信してください"]
+    
+    def get_rphis_text(self,rp_history):
+        text_list = []
+        for conv in rp_history:
+            text = f"""<content>
+<speaker>{conv['speaker']}</speaker>
+<massage>{conv['content']}</message>
+</content>
+"""
+            text_list.append(text)
+        return "".join(text_list)
+    
+    def norm_rp_res(self,text):
+        pattern = r'<response>(.*?)</response>'
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+        return None
+    
 # if __name__ == "__main__":
 #     userText = "猫の動画を調べてください"
 #     prompt = gp.get_searchYoutube_prompt(userText)
