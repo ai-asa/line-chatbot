@@ -53,17 +53,17 @@ PLAN_NAMES = {
     'free': 'フリープラン',
     'try': 'トライアルプラン'
 }
-PRICE_IDS = {
-    'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
-    'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
-    'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
-}
-# テスト用
 # PRICE_IDS = {
-#     'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
-#     'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+#     'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
+#     'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
 #     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
 # }
+# テスト用
+PRICE_IDS = {
+    'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
+    'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+    'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
+}
 PLAN_ORDER = ['free', '980', '1980', '3980']
 
 # RPの設定用の定数
@@ -125,9 +125,9 @@ def generate_rp_setting():
     }
     
     # 設定を文字列にフォーマット
-    setting_text = "【お客様設定】\n"
+    setting_text = ""
     for key, value in setting.items():
-        setting_text += f"■{key}：{value}\n"
+        setting_text += f"■ {key}：{value}\n"
     
     return setting_text
 
@@ -302,15 +302,14 @@ def sub_act(pending_action,mesText,userId,user_data):
 
 def retry_rp(userId,mesText,user_data):
     if mesText == 'はい':
-        rp_setting = user_data['rp_setting']
         fa.reset_rp_history(db, userId, isResetHistory=True, isRetryRP=False)
-        return ["会話履歴をリセットし、同じ設定で再度営業ロープレを開始します。", f"以下の設定で営業ロープレを開始します\n\n{rp_setting}\n\n====ここから開始====","テキストを送信し、会話を開始してください..."]
+        return ["会話履歴をリセットし、同じ設定で再度営業ロープレを開始します。", "====ここから開始====\n\nテキストを送信し、会話を開始してください..."]
     else:
         return close_rp(userId)
     
 def close_rp(userId):
     fa.reset_rp_history(db, userId, isResetHistory=True, isAlreadyRP=False, isRetryRP=False)
-    return ["営業ロープレを終了しました。お疲れさまでした", "繰り返し練習し、営業力を高めましょう！"]
+    return ["営業ロープレを終了します。お疲れさまでした", "繰り返し練習し、営業力を高めましょう！"]
 
 def exec_update_sub(pending_action,userId,user_data):
     if pending_action['desired_plan'] == 'try':
@@ -444,10 +443,10 @@ def rps_text(user_data):
     if user_data['isAlreadyRP']:
         # 会話履歴とRP設定更新
         fa.reset_rp_history(db, user_data['userId'], isResetHistory=True, rp_setting=rp_setting)
-        return ["これまでの営業ロープレの会話履歴と設定をリセットします", f"以下の設定で新たに営業ロープレを開始します\n\n{rp_setting}\n\n====ここから開始====","テキストを送信し、会話を開始してください..."]
+        return ["これまでの営業ロープレの会話履歴と設定をリセットしました。\n\n新たに営業ロープレを開始します","====ここから開始====\n\nテキストを送信し、会話を開始してください..."]
     else:
-        fa.set_initial_rp(db, user_data['userId'], rp_setting)
-        return ["【モード変更】\nゼロコンAIを相手に営業トレーニングを開始します", "ゼロコンAIが演じる顧客に対し、保険営業を行ってください！", "メニューの「終了＆批評」ボタンをクリックするとロープレを終了し、あなたの営業の内容に対し専門的な批評を行います",  f"では、以下の設定で営業ロープレを開始します\n\n{rp_setting}\n\n====ここから開始====","テキストを送信し、会話を開始してください..."]
+        fa.set_initial_rp(db, user_data['userId'], isAlreadyRP=True, rp_setting=rp_setting)
+        return ["【モード変更】\nゼロコンAIを相手に営業トレーニングを開始します", "ゼロコンAIが演じる顧客に対し、保険営業を行ってください！※顧客の設定はランダムに決められます", "メニューの「終了＆批評」ボタンをクリックすると営業ロープレを終了し、営業提案の内容を評価します",  "では、営業ロープレを開始します","====ここから開始====\n\nテキストを送信し、会話を開始してください..."]
 
 def rpr_text(user_data):
     """
@@ -455,26 +454,26 @@ def rpr_text(user_data):
     """
     if not user_data['isAlreadyRP']:
         return ["営業ロープレは開始されていません", "営業ロープレを開始するには、メニューの「開始＆リセット」ボタンをクリックしてください"]
-    # 営業ロープレの会話履歴を取得
     rp_history = user_data['rp_history']
-    # 営業ロープレの会話履歴を基にAIにて批評を行い、テキストを返す
-    res = norm_rpr_text(oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_history)))
+    rp_setting = user_data['rp_setting']
+    # res = norm_rpr_text(oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_setting,rp_history)))
+    res = oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_setting,rp_history))
     text = []
     if res == None:
-        text = ["営業ロープレを終了し、ゼロコンAIによる批評を行います","エラーにより、批評結果が取得できませんでした"]
+        text = ["営業ロープレを終了し、ゼロコンAIによる提案内容の評価を行います","申し訳ございません。エラーにより、評価結果が取得できませんでした"]
     else:
-        text = ["営業ロープレを終了し、ゼロコンAIによる批評を行います", "【ゼロコンAIによる批評】\n\n" + res]
-    restart_text = ["もう一度同じ設定で営業ロープレを開始しますか？", "「はい」と返信すると会話をリセットし、同じ設定で再度営業ロープレを開始します(「はい」以外の返信で終了します)"]
+        text = ["営業ロープレを終了し、ゼロコンAIによる提案内容の評価を行います", "まず、今回の顧客の設定は以下の通りでした\n\n【顧客の設定】\n" + rp_setting, "次にゼロコンAIによる提案内容の評価は以下の通りでした\n\n【提案内容の評価】\n" + res]
+    restart_text = ["もう一度同じ設定で営業ロープレを開始しますか？", "「はい」と返信すると会話をリセットし、同じ設定で再度営業ロープレを開始します(モード切替や「はい」以外の返信で終了します)"]
     text.append(restart_text)
-    fa.reset_rp_history(db, user_data['userId'], isRetryRP=True)
+    fa.reset_rp_history(db, user_data['userId'], isResetHistory=True, isRetryRP=True)
     return text
 
-def norm_rpr_text(text):
-    pattern = r'<response>(.*?)</response>'
-    match = re.search(pattern, text, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return None
+# def norm_rpr_text(text):
+#     pattern = r'<response>(.*?)</response>'
+#     match = re.search(pattern, text, re.DOTALL)
+#     if match:
+#         return match.group(1).strip()
+#     return None
 
 class RegStripe:
     def __init__(self,event,postType,replyToken,userId,user_data):
@@ -620,8 +619,8 @@ class messageText:
             return self.res_yo()
         elif botType == "gs":
             return self.res_gs()
-        elif botType == "rps":
-            return self.res_rps()
+        elif botType == "rps" or botType == "rpr":
+            return self.res_rp()
         else:
             return ['エラー：無効なモードを指定しています']
 
@@ -764,14 +763,20 @@ class messageText:
             return match.group(1).strip()
         return None
     
-    def res_rps(self):
-        # 営業ロープレの会話履歴を取得
+    def res_rp(self):
+        if self.userData['isAlreadyRP']:
+            return self._process_rp()
+        else:
+            return ["営業ロープレは終了しています。メニューから「開始＆リセット」をクリックして開始してください"]
+
+    def _process_rp(self):
+        rp_setting = self.userData['rp_setting']
         history_text = self.get_rphis_text(self.userData['rp_history'])
         print("history_text:",history_text)
-        # 営業ロープレの会話履歴を基にAIにて営業ロープレを行い、テキストを返す
-        res = self.norm_rp_res(oa.openai_chat("gpt-4o",gp.get_rp_prompt(history_text,self.userText)))
+        # res = self.norm_rp_res(oa.openai_chat("gpt-4o",gp.get_rp_prompt(rp_setting,history_text,self.userText)))
+        res = oa.openai_chat("gpt-4o",gp.get_rp_prompt(rp_setting,history_text,self.userText))
         if res:
-            # 会話履歴を更新する
+            # 会話履歴を更新
             fa.update_rp_history(db,self.userId,rp_data_limit,salesperson=self.userText,customer=res)
             return res
         else:
@@ -780,20 +785,19 @@ class messageText:
     def get_rphis_text(self,rp_history):
         text_list = []
         for conv in rp_history:
-            text = f"""<content>
+            text = f"""
 <speaker>{conv['speaker']}</speaker>
 <massage>{conv['content']}</message>
-</content>
 """
             text_list.append(text)
         return "".join(text_list)
     
-    def norm_rp_res(self,text):
-        pattern = r'<response>(.*?)</response>'
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-        return None
+    # def norm_rp_res(self,text):
+    #     pattern = r'<response>(.*?)</response>'
+    #     match = re.search(pattern, text, re.DOTALL)
+    #     if match:
+    #         return match.group(1).strip()
+    #     return None
     
 # if __name__ == "__main__":
 #     userText = "猫の動画を調べてください"
