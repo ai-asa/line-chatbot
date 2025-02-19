@@ -322,11 +322,11 @@ class FirestoreAdapter:
         update_data = {}
         if isResetHistory:
             update_data['rp_history'] = []
-        if rp_setting:
+        if rp_setting is not None:
             update_data['rp_setting'] = rp_setting
-        if isAlreadyRP:
+        if isAlreadyRP is not None:
             update_data['isAlreadyRP'] = isAlreadyRP
-        if isRetryRP:
+        if isRetryRP is not None:
             update_data['isRetryRP'] = isRetryRP
         if update_data:
             doc_ref.update(update_data)
@@ -355,7 +355,7 @@ class FirestoreAdapter:
         if customer:
             customer_message = {
                 "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
-                "speaker": 'customer',
+                "speaker": 'you',
                 "content": customer
             }
         if salesperson_message and customer_message:
