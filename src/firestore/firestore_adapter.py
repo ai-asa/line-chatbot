@@ -130,7 +130,7 @@ class FirestoreAdapter:
             return "fr"
 
     def update_history(self, db, userId, data_limit, user=None, assistant=None):
-
+        """通常の会話履歴を更新する"""
         userIds_ref = db.collection('userIds').document(userId)
         conversations_ref = userIds_ref.collection('conversations')
 
@@ -142,25 +142,19 @@ class FirestoreAdapter:
                 "speaker": 'user',
                 "content": user
             }
+            conversations_ref.add(user_message)
+
         if assistant:
             assistant_message = {
                 "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
                 "speaker": 'assistant',
-                "content": assistant    
+                "content": assistant
             }
-        if user_message and assistant_message:
-            new_message = [user_message, assistant_message]
-        elif user_message:
-            new_message = user_message
-        elif assistant_message:
-            new_message = assistant_message
+            conversations_ref.add(assistant_message)
 
         # ユーザードキュメントが存在しない場合は初期化
         if not userIds_ref.get().exists:
             self.initialize_user_data(db, userId)
-
-        # conversationsサブコレクションに新しいメッセージを追加
-        conversations_ref.add(new_message)
 
         # メッセージを timestamp の降順で取得
         snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).get()
@@ -193,15 +187,13 @@ class FirestoreAdapter:
             "trial_start": None,
             "trial_end": None,
             "isTrialValid": True,
-            "conversations": [],
             "original_sub_status": "free",
             'isAlreadyRP': False,
             'rp_setting': None,
-            'rp_history': [],
             'isRetryRP': False
         }
 
-    def get_user_data(self, db, user_id, data_limit):
+    def get_user_data(self, db, user_id, data_limit, rp_data_limit):
         """
         指定した user_id に紐づくすべてのデータを取得します。
         サブステータスのチェックと更新（get_sub_status の処理）も含めています。
@@ -219,7 +211,7 @@ class FirestoreAdapter:
             
             # 欠けているフィールドを検出し、update_dataに追加
             for field, default_value in initial_fields.items():
-                if field not in user_data:
+                if field not in user_data and field not in ['conversations', 'rp_history']:
                     update_data[field] = default_value
                     user_data[field] = default_value
                     if field == 'original_sub_status':
@@ -263,9 +255,15 @@ class FirestoreAdapter:
             
             # conversations サブコレクションのデータ取得
             conversations_ref = user_ref.collection('conversations')
-            snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(data_limit).get()
+            snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.ASCENDING).limit(data_limit).get()
             conversations = [snapshot.to_dict() for snapshot in snapshots]
             user_data['conversations'] = conversations
+            
+            # rp_history サブコレクションのデータ取得
+            rp_history_ref = user_ref.collection('rp_history')
+            rp_snapshots = rp_history_ref.order_by('timestamp', direction=firestore.Query.ASCENDING).limit(rp_data_limit).get()
+            rp_history = [snapshot.to_dict() for snapshot in rp_snapshots]
+            user_data['rp_history'] = rp_history
             
             return user_data
         else:
@@ -316,24 +314,48 @@ class FirestoreAdapter:
             "trial_end": trial_end_jst.strftime('%Y年%m月%d日%H時%M分')
         }
 
-    def reset_rp_history(self, db, user_id, isResetHistory=None, rp_setting=None, isAlreadyRP: bool = None, isRetryRP: bool = None):
-        """RPの会話履歴とRP設定をリセットする"""
-        doc_ref = db.collection('users').document(user_id)
+    def reset_rp_history(self, db, user_id, isResetHistory=False, rp_setting=None, isAlreadyRP: bool = None, isRetryRP: bool = None):
+        """RPの会話履歴とRP設定をリセットする
+        
+        ・必要なフィールド更新は単体のupdateで行い、
+        サブコレクションの削除はバッチ書き込みで独立して実行する。
+        ・トランザクションは、読み取りと書き込みの整合性が必要な場合に利用すべきで、
+        単純な削除処理には不要です。
+        """
+        doc_ref = db.collection('userIds').document(user_id)
         update_data = {}
-        if isResetHistory:
-            update_data['rp_history'] = []
+        
         if rp_setting is not None:
             update_data['rp_setting'] = rp_setting
         if isAlreadyRP is not None:
             update_data['isAlreadyRP'] = isAlreadyRP
         if isRetryRP is not None:
             update_data['isRetryRP'] = isRetryRP
+
+        # まずドキュメントの更新（フィールドの更新はアトミックなので十分）
         if update_data:
-            doc_ref.update(update_data)
+            try:
+                doc_ref.update(update_data)
+            except Exception as e:
+                print(f"Error updating user data: {e}")
+                raise
+
+        # サブコレクションのrp_historyの削除は、トランザクション内でなくバッチ処理で独立して実行
+        if isResetHistory:
+            try:
+                batch = db.batch()
+                rp_history_ref = doc_ref.collection('rp_history')
+                docs = rp_history_ref.get()
+                for doc in docs:
+                    batch.delete(doc.reference)
+                batch.commit()
+            except Exception as e:
+                print(f"Error deleting rp_history subcollection: {e}")
+                raise
 
     def set_initial_rp(self, db, user_id, rp_setting):
         """初めてのRP設定を保存する"""
-        doc_ref = db.collection('users').document(user_id)
+        doc_ref = db.collection('userIds').document(user_id)
         doc_ref.update({
             'isAlreadyRP': True,
             'rp_setting': rp_setting,
@@ -341,6 +363,7 @@ class FirestoreAdapter:
         })
 
     def update_rp_history(self, db, userId, rp_data_limit, salesperson=None, customer=None):
+        """RPの会話履歴を更新する"""
         userIds_ref = db.collection('userIds').document(userId)
         history_ref = userIds_ref.collection('rp_history')
 
@@ -352,25 +375,19 @@ class FirestoreAdapter:
                 "speaker": 'salesperson',
                 "content": salesperson
             }
+            history_ref.add(salesperson_message)
+
         if customer:
             customer_message = {
                 "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
                 "speaker": 'you',
                 "content": customer
             }
-        if salesperson_message and customer_message:
-            new_message = [salesperson_message, customer_message]
-        elif salesperson_message:
-            new_message = salesperson_message
-        elif customer_message:
-            new_message = customer_message
+            history_ref.add(customer_message)
 
         # ユーザードキュメントが存在しない場合は初期化
         if not userIds_ref.get().exists:
             self.initialize_user_data(db, userId)
-
-        # rp_historyサブコレクションに新しいメッセージを追加
-        history_ref.add(new_message)
 
         # メッセージを timestamp の降順で取得
         snapshots = history_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).get()
