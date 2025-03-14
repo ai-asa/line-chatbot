@@ -314,7 +314,9 @@ def message_process(event,userId,user_data):
     if pending_action:
         return sub_act(pending_action,mesText,userId,user_data)
     if isRetryRP:
-        return retry_rp(userId,mesText,user_data)
+        # 修正箇所１：現在のbotTypeがRPの場合、knに変更する
+        return mode_change(userId,'kn',user_data)
+        # return retry_rp(userId,mesText,user_data)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
@@ -326,7 +328,6 @@ def sub_act(pending_action,mesText,userId,user_data):
         return cancel_update_sub(userId)
 
 def retry_rp(userId,mesText,user_data):
-    # 性別や年齢や大まかな年収など、見た目でわかる設定部分は説明する
     situation = rp_situation(user_data)    
     if mesText == 'はい':
         fa.reset_rp_history(db, userId, isResetHistory=True, isRetryRP=False)
@@ -415,7 +416,9 @@ def event_postback(event,replyToken,userId,user_data):
         la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, text)
         return True
     postType = event['postback']['data']
-    if postType in ['kn','qa','yo','gs','rps','rpr']:
+    # 修正箇所２：yo、qa、rps、rprの場合、変更を受け付けない
+    # if postType in ['kn','qa','yo','gs','rps','rpr']:
+    if postType in ['kn','gs']:
         res = mode_change(userId,postType,user_data)
     elif postType in ['980','1980','3980','free','try']:
         rs = RegStripe(event,postType,replyToken,userId,user_data)
@@ -646,16 +649,22 @@ class messageText:
             return ['メニューからモードを選択してください']
         elif botType == "kn":
             return self.res_kn()
-        elif botType == "qa":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
-        elif botType == "yo":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # elif botType == "qa":
+        #     return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # elif botType == "yo":
+        #     return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # 修正箇所３：qaまたはyoの場合、専用エラーを出す
+        elif botType == "qa" or botType == "yo":
+            return ['エラー：無効なモードを指定しています。別のモードを選択してください']
         elif botType == "gs":
             return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
-        elif botType == "rps":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
-        elif botType == "rpr":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # elif botType == "rps":
+        #     return ['本機能をご利用いただくには、上級プランにご契約いただく必要があります']
+        # elif botType == "rpr":
+        #     return ['本機能をご利用いただくには、上級プランにご契約いただく必要があります']
+        # 修正箇所４：rpsまたはrprの場合、専用エラーを出す
+        elif botType == "rps" or botType == "rpr":
+            return ['エラー：無効なモードを指定しています。別のモードを選択してください']
         else:
             return ['エラー：無効なモードを指定しています']
     
