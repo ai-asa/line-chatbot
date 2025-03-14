@@ -19,7 +19,13 @@ class RichmenuController:
         with open(self.richMenuIds_path,'r') as f:
             self.richMenuIds = json.load(f)
         pass
-    
+
+# タブ選択：240*843 240*843
+# 空白：160*1686
+# 両脇空白：100、左上
+
+
+#
     def gen_richmenu(self,image_path_list):
         data_list = []
         data_1= {
@@ -36,7 +42,7 @@ class RichmenuController:
                         "x": 1251,
                         "y": 0,
                         "width": 1250,
-                        "height": 150
+                        "height": 240
                     },
                     "action": {
                         "type": "richmenuswitch",
@@ -46,10 +52,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 0,
-                        "y": 151,
-                        "width": 833,
-                        "height": 768
+                        "x": 100,
+                        "y": 490,
+                        "width": 720,
+                        "height": 475
                     },
                     "action": {
                         "type": "postback",
@@ -58,10 +64,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 834,
-                        "y": 151,
-                        "width": 833,
-                        "height": 768
+                        "x": 900,
+                        "y": 490,
+                        "width": 720,
+                        "height": 475
                     },
                     "action": {
                         "type": "postback",
@@ -70,10 +76,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 1667,
-                        "y": 151,
-                        "width": 834,
-                        "height": 768
+                        "x": 1695,
+                        "y": 490,
+                        "width": 720,
+                        "height": 475
                     },
                     "action": {
                         "type": "postback",
@@ -82,10 +88,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 0,
-                        "y": 919,
-                        "width": 833,
-                        "height": 768
+                        "x": 100,
+                        "y": 1060,
+                        "width": 720,
+                        "height": 475
                     },
                     "action": {
                         "type": "postback",
@@ -94,10 +100,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 834,
-                        "y": 919,
-                        "width": 833,
-                        "height": 768
+                        "x": 900,
+                        "y": 1350,
+                        "width": 740,
+                        "height": 190
                     },
                     "action": {
                         "type": "postback",
@@ -106,10 +112,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 1667,
-                        "y": 919,
-                        "width": 834,
-                        "height": 768
+                        "x": 1650,
+                        "y": 1350,
+                        "width": 740,
+                        "height": 190
                     },
                     "action": {
                         "type": "postback",
@@ -133,7 +139,7 @@ class RichmenuController:
                         "x": 0,
                         "y": 0,
                         "width": 1250,
-                        "height": 150
+                        "height": 240
                     },
                     "action": {
                         "type": "richmenuswitch",
@@ -143,10 +149,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 0,
-                        "y": 151,
-                        "width": 833,
-                        "height": 1536
+                        "x": 100,
+                        "y": 450,
+                        "width": 720,
+                        "height": 1120
                     },
                     "action": {
                         "type": "postback",
@@ -155,10 +161,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 834,
-                        "y": 151,
-                        "width": 833,
-                        "height": 768
+                        "x": 880,
+                        "y": 450,
+                        "width": 740,
+                        "height": 510
                     },
                     "action": {
                         "type": "postback",
@@ -167,10 +173,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 834,
-                        "y": 919,
-                        "width": 833,
-                        "height": 768
+                        "x": 1655,
+                        "y": 450,
+                        "width": 740,
+                        "height": 510
                     },
                     "action": {
                         "type": "postback",
@@ -179,10 +185,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 1667,
-                        "y": 151,
-                        "width": 834,
-                        "height": 151
+                        "x": 880,
+                        "y": 1060,
+                        "width": 740,
+                        "height": 510
                     },
                     "action": {
                         "type": "postback",
@@ -191,10 +197,10 @@ class RichmenuController:
                 },
                 {
                     "bounds": {
-                        "x": 1667,
-                        "y": 919,
-                        "width": 834,
-                        "height": 768
+                        "x": 1665,
+                        "y": 1060,
+                        "width": 740,
+                        "height": 510
                     },
                     "action": {
                         "type": "postback",
