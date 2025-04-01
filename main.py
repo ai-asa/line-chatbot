@@ -17,6 +17,25 @@ from src.youtube.youtube_data_api_adapter import YoutubeDataApiAdapter
 from src.stripe.stripe_adapter import StripeAdapter
 import random
 
+"""
+保険商品乗り換え提案
+・リッチメニュー選択動作
+    ・規定テキストのリプライ、フラグ立て -> ステップで数字 0: 未選択、1: 被保険者の年齢と性別、2: 現在の保険会社&保険商品名と値段、3: 乗り換え先の保険商品名と値段
+・保険会社&保険商品のAIウェブサーチによる同定 10s
+    ・データベースの検索
+    ・AI同一検証
+・Trueの場合
+    ・現在の情報を使用して乗り換え提案を作成
+    ・提案内容をリプライ
+・Falseの場合
+    ・保険情報についてAIウェブサーチ 2*20s 40s
+    ・HokenlistSearchへの送信
+    ・乗り換え提案を作成 10s
+    ・提案内容をリプライ
+ここまでのすべての処理が1分以内に終了する必要がある -> ギリギリだと思う
+-> 一旦自費で保険商品情報を集める
+"""
+
 load_dotenv()
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 gp = GetPrompt()
@@ -53,17 +72,17 @@ PLAN_NAMES = {
     'free': 'フリープラン',
     'try': 'トライアルプラン'
 }
-# PRICE_IDS = {
-#     'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
-#     'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
-#     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
-# }
-# テスト用
 PRICE_IDS = {
-    'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
-    'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+    'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
+    'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
 }
+# テスト用
+# PRICE_IDS = {
+#     'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
+#     'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+#     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
+# }
 PLAN_ORDER = ['free', '980', '1980', '3980']
 
 # RPの設定用の定数
@@ -298,7 +317,7 @@ def event_message(event,replyToken,userId,user_data):
     res = []
     mesType = event['message']['type']
     if mesType == "text":
-        res = message_process(event,userId,user_data)
+        res = message_process(event,userId,user_data,replyToken)
     else:
         res = ["テキストメッセージ以外には対応していません"]
     la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
@@ -307,19 +326,167 @@ def event_message(event,replyToken,userId,user_data):
     #     print(e)
     #     return False
     
-def message_process(event,userId,user_data):
+def message_process(event,userId,user_data,replyToken):
     mesText = event['message']['text']
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
+    transfer_status = user_data.get('transfer_status', 0)
+
     if pending_action:
         return sub_act(pending_action,mesText,userId,user_data)
     if isRetryRP:
         # 修正箇所１：現在のbotTypeがRPの場合、knに変更する
         return mode_change(userId,'kn',user_data)
         # return retry_rp(userId,mesText,user_data)
+    
+    # transfer_statusに基づく処理
+    if transfer_status == 1:
+        return process_insured_info(userId, mesText)
+    elif transfer_status == 2:
+        return process_current_insurance(userId, mesText)
+    elif transfer_status == 3:
+        return process_target_insurance(userId, mesText)
+    elif transfer_status == 4:
+        return process_execute_proposal(userId, user_data, mesText,replyToken)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
+
+def process_insured_info(userId, mesText):
+    """被保険者情報を処理する関数"""
+    try:
+        # Firestoreに保存
+        fa.update_insurance_state(db, userId, 
+            transfer_status=2,
+            info_type='insured_info',
+            info_data={'info': mesText}
+        )
+        
+        return ["ありがとうございます。\n次に、現在ご加入されている保険会社名と保険商品名、月々の保険料を教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+    except Exception as e:
+        return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください。"]
+
+def extract_insurance_info(mesText):
+    """保険会社名、保険商品名、保険料を抽出する共通関数"""
+    try:
+        # 保険料を抽出（数字と単位「円」を含む部分を探す）
+        premium_match = re.search(r'(\d{1,3}(,\d{3})*)\s*円', mesText)
+        premium = premium_match.group(1) if premium_match else None
+
+        if not premium:
+            return None, None, None
+
+        # AIウェブサーチで保険会社と商品名を調査
+        search_prompt = gp.get_insurance_search_prompt(mesText)
+        search_result = oa.openai_chat("gpt-4o-search-preview", search_prompt)
+
+        # 検索結果から情報を抽出
+        company_match = re.search(r'<company_name>\s*(.*?)\s*</company_name>', search_result, re.DOTALL)
+        product_match = re.search(r'<product_name>\s*(.*?)\s*</product_name>', search_result, re.DOTALL)
+
+        company_name = company_match.group(1) if company_match else None
+        product_name = product_match.group(1) if product_match else None
+
+        return company_name, product_name, premium
+    except Exception as e:
+        print(f"Error in extract_insurance_info: {str(e)}")
+        return None, None, None
+
+def process_current_insurance(userId, mesText):
+    """現在の保険情報を処理する関数"""
+    try:
+        # 共通関数を使用して保険情報を抽出
+        company_name, product_name, premium = extract_insurance_info(mesText)
+
+        if not company_name or not product_name or not premium:
+            return ["申し訳ありません。保険会社名、商品名、または保険料を正しく読み取れませんでした。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+
+        # Firestoreに保存
+        fa.update_insurance_state(db, userId,
+            transfer_status=3,
+            info_type='current_insurance',
+            info_data={
+                'company_name': company_name,
+                'product_name': product_name,
+                'premium': premium
+            }
+        )
+        
+        # リプライメッセージを作成
+        messages = [
+            f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}\n・保険料：{premium}円",
+            "次に、乗り換え提案したい保険会社名と保険商品名、希望する月々の保険料を教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"
+        ]
+        
+        return messages
+
+    except Exception as e:
+        print(f"Error in process_current_insurance: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+
+def process_target_insurance(userId, mesText):
+    """乗り換え先の保険情報を処理する関数"""
+    try:
+        # 共通関数を使用して保険情報を抽出
+        company_name, product_name, premium = extract_insurance_info(mesText)
+
+        if not company_name or not product_name or not premium:
+            return ["申し訳ありません。保険会社名、商品名、または保険料を正しく読み取れませんでした。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+
+        # Firestoreに保存
+        fa.update_insurance_state(db, userId,
+            transfer_status=4,
+            info_type='target_insurance',
+            info_data={
+                'company_name': company_name,
+                'product_name': product_name,
+                'premium': premium
+            }
+        )
+        
+        # リプライメッセージを作成
+        messages = [
+            f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}\n・保険料：{premium}円",
+            "ここまでの情報に誤りがなければ、乗り換え提案を作成いたしますが、よろしいでしょうか？\n\n「はい」または「いいえ」でお答えください。"
+        ]
+        
+        return messages
+
+    except Exception as e:
+        print(f"Error in process_target_insurance: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+
+def process_execute_proposal(userId,user_data,mesText,replyToken):
+    """乗り換え提案を実行する関数"""
+    if mesText == 'はい':
+        return create_proposal(userId,user_data,replyToken)
+    else:
+        return cancel_proposal(userId)
+
+"""
+まず、ユーザーが入力した保険会社名と保険商品の情報を用いて、Firebaseのデータベースでベクトル検索を行います。検索が完了したら、その結果をAIに渡し、データベースに保険情報が存在するかを判定します。
+
+もしデータベースに保険情報が存在している場合、2つの保険情報がどちらも揃っているかを確認し、揃っていればAIに保険提案を作成させます。
+
+一方、データベースに保険情報が存在しない場合、AIウェブサーチを使用してそれぞれの保険情報を検索し、データベースに保存します。その後、取得したデータをJSON形式で特定のエンドポイントに送信します。送信後、取得した保険情報をもとに、AIで保険提案や乗り換え提案を生成します。最後に、生成したテキストを返す処理を行います。
+"""
+
+def create_proposal(userId,replyToken):
+    """提案を作成する関数"""
+    res = ["以上のデータをもとに、乗り換え提案を作成します","保険商品の情報を収集しています。\n\nこれには30秒~60秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
+    la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+    pass
+
+def cancel_proposal(userId):
+    """保険商品の乗り換え提案をキャンセルし、初期状態に戻す関数"""
+    # transfer_statusを0に設定し、保険情報を削除
+    fa.update_insurance_state(db, userId, transfer_status=0, should_delete=True)
+    
+    return [
+        "乗り換え提案の情報をリセットしました。",
+        "再度、想定される被保険者の年齢と性別を教えてください。また、その他の補足情報があれば教えてください",
+        "例：\n・年齢：30歳\n・性別：男性\n・結婚しており子供がいる"
+    ]
 
 def sub_act(pending_action,mesText,userId,user_data):
     if mesText == 'はい':
@@ -409,6 +576,10 @@ def event_unfollow(event,replyToken,userId):
 def event_postback(event,replyToken,userId,user_data):
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
+    transfer_status = user_data.get('transfer_status', 0)
+    if 1 <= transfer_status <= 4:
+        fa.set_transfer_status(db, userId, 0)
+        fa.delete_insurance_info(db, userId)
     if pending_action:
         text = cancel_update_sub(userId)
     elif isRetryRP:
@@ -418,7 +589,7 @@ def event_postback(event,replyToken,userId,user_data):
     postType = event['postback']['data']
     # 修正箇所２：yo、qa、rps、rprの場合、変更を受け付けない
     # if postType in ['kn','qa','yo','gs','rps','rpr']:
-    if postType in ['kn','gs']:
+    if postType in ['kn','gs','ta','tr']:
         res = mode_change(userId,postType,user_data)
     elif postType in ['980','1980','3980','free','try']:
         rs = RegStripe(event,postType,replyToken,userId,user_data)
@@ -438,10 +609,14 @@ def mode_change(userId,postType,user_data):
     current_plan = user_data['current_sub_status']
     if postType == "kn":
         judg,text = mode_kn(current_plan)
-    elif postType == "qa":
-        judg,text = mode_qa(current_plan)
-    elif postType == "yo":
-        judg,text = mode_yo(current_plan)
+    # elif postType == "qa":
+    #     judg,text = mode_qa(current_plan)
+    # elif postType == "yo":
+    #     judg,text = mode_yo(current_plan)
+    elif postType == "ta":
+        judg,text = mode_ta(userId,user_data,current_plan)
+    elif postType == "tr":
+        judg,text = mode_tr(userId,user_data,current_plan)
     elif postType == "gs":
         judg,text = mode_gs(current_plan)
     elif postType == "rps":
@@ -458,23 +633,35 @@ def mode_kn(current_plan):
     else:
         return True, ["【モード変更】\nゼロコンAIが保険の知識・提案方法に関して一問一答でお答えします"]
 
-def mode_qa(current_plan):
-    if current_plan in ['free','980']:
-        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
-    else:
-        return True, ["【モード変更】\nゼロコンAIが保険に関するQAデータベースに基づいてお答えします"]
+# def mode_qa(current_plan):
+#     if current_plan in ['free','980']:
+#         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+#     else:
+#         return True, ["【モード変更】\nゼロコンAIが保険に関するQAデータベースに基づいてお答えします"]
     
-def mode_yo(current_plan):
-    if current_plan in ['free','980']:
-        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
-    else:
-        return True, ["【モード変更】\nゼロコンAIが知りたい情報についてYoutube動画をお調べします"]
-    
+# def mode_yo(current_plan):
+#     if current_plan in ['free','980']:
+#         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+#     else:
+#         return True, ["【モード変更】\nゼロコンAIが知りたい情報についてYoutube動画をお調べします"]
+
 def mode_gs(current_plan):
     if current_plan in ['free','980']:
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
         return True, ["【モード変更】\nゼロコンAIが会話形式で様々な質問、ご相談に対応します"]
+
+def mode_ta(userId,user_data,current_plan):
+    if current_plan in ['free','980']:
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+    else:
+        return True, ta_text(userId,user_data)
+    
+def mode_tr(userId,user_data,current_plan):
+    if current_plan in ['free','980']:
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+    else:
+        return True, tr_text(userId,user_data)
 
 def mode_rps(userId,current_plan,user_data):
     if current_plan in ['free','980']:
@@ -487,7 +674,24 @@ def mode_rpr(userId,current_plan,user_data):
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
         return True, rpr_text(userId,user_data)
+
+def ta_text(userId,user_data):
+    """
     
+    """
+    return [""]
+
+def tr_text(userId,user_data):
+    """
+    保険商品の乗り換え提案機能の状態を設定し、
+    被保険者の現在加入している保険商品名とその保険会社名を質問するリプライを返す
+    """
+    # 乗り換え提案の状態を1（被保険者の年齢と性別を質問中）に設定
+    fa.update_insurance_state(db, userId, transfer_status=1)
+    
+    return ["【モード変更】\n保険商品の乗り換えを提案します","まずは、想定される被保険者の年齢と性別を教えてください。また、その他の補足情報があれば教えてください",
+            "例：\n・年齢：30歳\n・性別：男性\n・結婚しており子供がいる"]
+
 def rps_text(userId,user_data):
     """RPの設定を生成し、テキストを返す"""
     # RP設定を生成

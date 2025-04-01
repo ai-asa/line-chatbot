@@ -190,7 +190,12 @@ class FirestoreAdapter:
             "original_sub_status": "free",
             'isAlreadyRP': False,
             'rp_setting': None,
-            'isRetryRP': False
+            'isRetryRP': False,
+            'transfer_status': 0,  # 追加：乗り換え提案の状態を管理
+            # 保険関連フィールドの初期値を追加
+            'insurance_insured_info': None,
+            'insurance_current_insurance': None,
+            'insurance_target_insurance': None
         }
 
     def get_user_data(self, db, user_id, data_limit, rp_data_limit):
@@ -405,3 +410,111 @@ class FirestoreAdapter:
         snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(rp_data_limit).get()
         messages = [snapshot.to_dict() for snapshot in snapshots]
         return messages
+
+    def update_insurance_state(self, db, user_id: str, transfer_status: int = None, info_type: str = None, info_data: dict = None, should_delete: bool = False):
+        """保険関連の状態と情報を一括で更新する関数
+        
+        Args:
+            db: Firestoreのデータベースインスタンス
+            user_id (str): ユーザーID
+            transfer_status (int, optional): 状態を示す数値
+                0: 未選択/初期状態
+                1: 被保険者の年齢と性別を質問中
+                2: 現在の保険会社&保険商品名と値段を質問中
+                3: 乗り換え先の保険商品名と値段を質問中
+                4: 情報に誤りがないか、処理を実行するかを質問中
+            info_type (str, optional): 情報の種類 ('insured_info' | 'current_insurance' | 'target_insurance')
+            info_data (dict, optional): 保存するデータ
+            should_delete (bool, optional): 保険情報を削除するかどうか
+        """
+        doc_ref = db.collection('userIds').document(user_id)
+        update_data = {}
+
+        # transfer_statusの更新
+        if transfer_status is not None:
+            update_data.update({
+                'transfer_status': transfer_status,
+                'botType': 'tr'
+            })
+
+        # 保険情報の更新
+        if info_type and info_data and not should_delete:
+            update_data[f'insurance_{info_type}'] = info_data
+
+        # 保険情報の削除
+        if should_delete:
+            update_data.update({
+                'insurance_insured_info': None,
+                'insurance_current_insurance': None,
+                'insurance_target_insurance': None
+            })
+
+        # データの更新（一括で実行）
+        if update_data:
+            doc_ref.set(update_data, merge=True)
+    
+
+    """
+    修正事項
+    エッセンシャルインフォじゃなくて 今回の保険情報一覧のベクトル検索の関数に書き換える必要があります
+    """
+    def get_valid_essential_info(self, db, query_vector=None, limit=10):
+        """
+        有効期限内の本質情報を取得します。
+        query_vectorが指定された場合は、ベクトル検索を行います。
+        データが存在しない場合は初期化を行います。
+        期限切れのデータは削除されます。
+
+        Args:
+            db: Firestoreデータベースインスタンス
+            query_vector (list, optional): 検索クエリのベクトル。Noneの場合はベクトル検索を行いません。
+            limit (int, optional): 取得する結果の最大数。デフォルトは10。
+
+        Returns:
+            list: 有効な本質情報のリスト。query_vectorが指定された場合は類似度順にソートされます。
+                  各要素に'similarity'フィールドが追加され、0-1の範囲で正規化された類似度が格納されます。
+        """
+        doc_ref = db.collection('articles').document('essential_info')
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            self.initialize_articles_data(db)
+            return []
+            
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        info_list = doc.to_dict().get('info_list', [])
+        
+        # 有効期限内の情報のみをフィルタリング
+        valid_info = [info for info in info_list if info['expiration_date'] > now]
+        
+        # 期限切れのデータが存在する場合、データベースを更新
+        if len(valid_info) < len(info_list):
+            doc_ref.update({
+                'info_list': valid_info
+            })
+
+        # ベクトル検索が指定された場合
+        if query_vector is not None:
+            # クエリベクトルをNumPy配列に変換
+            query_array = np.array(query_vector)
+            
+            # 有効な情報に対してベクトル検索を実行
+            results = []
+            for info in valid_info:
+                # 埋め込みベクトルをNumPy配列に変換
+                embedding_array = np.array(info['embedding'])
+                # ユークリッド距離を計算（L2ノルム）
+                distance = np.linalg.norm(query_array - embedding_array)
+                # 距離を0-1の類似度に変換（1が最も類似）
+                similarity = 1 / (1 + distance)
+                # 情報をコピーして類似度を追加
+                info_with_similarity = info.copy()
+                info_with_similarity['similarity'] = similarity
+                results.append((similarity, info_with_similarity))
+            
+            # 類似度でソートして上位limit件を返す（類似度の降順）
+            results.sort(key=lambda x: x[0], reverse=True)
+            return [info for _, info in results[:limit]]
+        
+        # ベクトル検索が指定されていない場合は、タイムスタンプでソート
+        return sorted(valid_info, key=lambda x: x['timestamp'], reverse=True)[:limit]

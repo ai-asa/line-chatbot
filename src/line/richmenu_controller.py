@@ -83,7 +83,7 @@ class RichmenuController:
                     },
                     "action": {
                         "type": "postback",
-                        "data": "qa"
+                        "data": "ta"#talkの略(話しかけ方)
                     }
                 },
                 {
@@ -95,7 +95,7 @@ class RichmenuController:
                     },
                     "action": {
                         "type": "postback",
-                        "data": "yo"
+                        "data": "tr"#transferの略(乗り換え)
                     }
                 },
                 {
