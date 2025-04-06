@@ -19,25 +19,6 @@ from src.stripe.stripe_adapter import StripeAdapter
 import random
 import logging
 
-"""
-保険商品乗り換え提案
-・リッチメニュー選択動作
-    ・規定テキストのリプライ、フラグ立て -> ステップで数字 0: 未選択、1: 被保険者の年齢と性別、2: 現在の保険会社&保険商品名と値段、3: 乗り換え先の保険商品名と値段
-・保険会社&保険商品のAIウェブサーチによる同定 10s
-    ・データベースの検索
-    ・AI同一検証
-・Trueの場合
-    ・現在の情報を使用して乗り換え提案を作成
-    ・提案内容をリプライ
-・Falseの場合
-    ・保険情報についてAIウェブサーチ 2*20s 40s
-    ・HokenlistSearchへの送信
-    ・乗り換え提案を作成 10s
-    ・提案内容をリプライ
-ここまでのすべての処理が1分以内に終了する必要がある -> ギリギリだと思う
--> 一旦自費で保険商品情報を集める
-"""
-
 load_dotenv()
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 INSURANCE_DB_URL = os.getenv('INSURANCE_DB_URL')
@@ -75,17 +56,17 @@ PLAN_NAMES = {
     'free': 'フリープラン',
     'try': 'トライアルプラン'
 }
-PRICE_IDS = {
-    'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
-    'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
-    'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
-}
-# テスト用
 # PRICE_IDS = {
-#     'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
-#     'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+#     'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
+#     'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
 #     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
 # }
+# テスト用
+PRICE_IDS = {
+    'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
+    'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+    'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
+}
 PLAN_ORDER = ['free', '980', '1980', '3980']
 
 # RPの設定用の定数
