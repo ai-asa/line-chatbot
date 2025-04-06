@@ -731,7 +731,7 @@ def event_postback(event,replyToken,userId,user_data):
     transfer_status = user_data.get('transfer_status', 0)
     if 1 <= transfer_status <= 4:
         fa.update_insurance_state(db, userId, transfer_status=0, should_delete=True)
-    if pending_action:
+    elif pending_action:
         text = cancel_update_sub(userId)
     elif isRetryRP:
         text = close_rp(userId)
