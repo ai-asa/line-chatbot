@@ -2,6 +2,7 @@
 import os
 import re
 import datetime
+import requests
 import functions_framework
 import firebase_admin
 from firebase_admin import firestore
@@ -16,6 +17,7 @@ from src.rag.index_controller import IndexController
 from src.youtube.youtube_data_api_adapter import YoutubeDataApiAdapter
 from src.stripe.stripe_adapter import StripeAdapter
 import random
+import logging
 
 """
 保険商品乗り換え提案
@@ -38,6 +40,7 @@ import random
 
 load_dotenv()
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
+INSURANCE_DB_URL = os.getenv('INSURANCE_DB_URL')
 gp = GetPrompt()
 la = LineAdapter()
 fa = FirestoreAdapter()
@@ -317,7 +320,7 @@ def event_message(event,replyToken,userId,user_data):
     res = []
     mesType = event['message']['type']
     if mesType == "text":
-        res = message_process(event,userId,user_data,replyToken)
+        res = message_process(event,userId,user_data)
     else:
         res = ["テキストメッセージ以外には対応していません"]
     la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
@@ -326,7 +329,7 @@ def event_message(event,replyToken,userId,user_data):
     #     print(e)
     #     return False
     
-def message_process(event,userId,user_data,replyToken):
+def message_process(event,userId,user_data):
     mesText = event['message']['text']
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
@@ -347,7 +350,7 @@ def message_process(event,userId,user_data,replyToken):
     elif transfer_status == 3:
         return process_target_insurance(userId, mesText)
     elif transfer_status == 4:
-        return process_execute_proposal(userId, user_data, mesText,replyToken)
+        return process_execute_proposal(userId, user_data, mesText)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
@@ -387,6 +390,9 @@ def extract_insurance_info(mesText):
         company_name = company_match.group(1) if company_match else None
         product_name = product_match.group(1) if product_match else None
 
+        if company_name == 'None' or product_name == 'None':
+            return None, None, None
+
         return company_name, product_name, premium
     except Exception as e:
         print(f"Error in extract_insurance_info: {str(e)}")
@@ -399,7 +405,7 @@ def process_current_insurance(userId, mesText):
         company_name, product_name, premium = extract_insurance_info(mesText)
 
         if not company_name or not product_name or not premium:
-            return ["申し訳ありません。保険会社名、商品名、または保険料を正しく読み取れませんでした。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+            return ["申し訳ありません。該当する保険会社名、商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
 
         # Firestoreに保存
         fa.update_insurance_state(db, userId,
@@ -422,7 +428,7 @@ def process_current_insurance(userId, mesText):
 
     except Exception as e:
         print(f"Error in process_current_insurance: {str(e)}")
-        return ["申し訳ありません。エラーが発生しました。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+        return ["申し訳ありません。エラーが発生しました。\n再度、保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
 
 def process_target_insurance(userId, mesText):
     """乗り換え先の保険情報を処理する関数"""
@@ -431,7 +437,7 @@ def process_target_insurance(userId, mesText):
         company_name, product_name, premium = extract_insurance_info(mesText)
 
         if not company_name or not product_name or not premium:
-            return ["申し訳ありません。保険会社名、商品名、または保険料を正しく読み取れませんでした。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+            return ["申し訳ありません。該当する保険会社名、商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
 
         # Firestoreに保存
         fa.update_insurance_state(db, userId,
@@ -456,26 +462,191 @@ def process_target_insurance(userId, mesText):
         print(f"Error in process_target_insurance: {str(e)}")
         return ["申し訳ありません。エラーが発生しました。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
 
-def process_execute_proposal(userId,user_data,mesText,replyToken):
+def process_execute_proposal(userId,user_data,mesText):
     """乗り換え提案を実行する関数"""
     if mesText == 'はい':
-        return create_proposal(userId,user_data,replyToken)
+        return create_proposal(userId,user_data)
     else:
         return cancel_proposal(userId)
 
-"""
-まず、ユーザーが入力した保険会社名と保険商品の情報を用いて、Firebaseのデータベースでベクトル検索を行います。検索が完了したら、その結果をAIに渡し、データベースに保険情報が存在するかを判定します。
 
-もしデータベースに保険情報が存在している場合、2つの保険情報がどちらも揃っているかを確認し、揃っていればAIに保険提案を作成させます。
-
-一方、データベースに保険情報が存在しない場合、AIウェブサーチを使用してそれぞれの保険情報を検索し、データベースに保存します。その後、取得したデータをJSON形式で特定のエンドポイントに送信します。送信後、取得した保険情報をもとに、AIで保険提案や乗り換え提案を生成します。最後に、生成したテキストを返す処理を行います。
-"""
-
-def create_proposal(userId,replyToken):
+def create_proposal(userId, user_data):
     """提案を作成する関数"""
-    res = ["以上のデータをもとに、乗り換え提案を作成します","保険商品の情報を収集しています。\n\nこれには30秒~60秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
-    la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
-    pass
+    try:
+        # 初期メッセージを送信
+        res = ["以上のデータをもとに、乗り換え提案を作成します","保険商品の情報を収集しています","これには30秒~60秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
+        # テキストをプッシュ
+        la.push_message(LINE_ACCESS_TOKEN, userId, res)
+
+        # 現在の保険情報の処理
+        current_insurance = user_data.get('insurance_current_insurance')
+        current_result = None
+        if current_insurance:
+            current_text = f"{current_insurance['company_name']}の{current_insurance['product_name']}"
+            current_vector = oa.embedding([current_text])[0]
+            current_results = fa.get_insurance_info(db, current_vector, 5)
+            
+            # 検索結果のテキスト化（番号付き）
+            current_search_text = "\n".join([
+                f"{i}. {result['company']}の{result['insurance_name']}" 
+                for i, result in enumerate(current_results, 1)
+            ])
+            
+            # AI による検証
+            verify_prompt = gp.get_insurance_verification_prompt(current_search_text, current_text)
+            verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+            
+            # 正規表現で結果を抽出
+            if verification_response:
+                match = re.search(r'<result_number>\s*(\d+|None)\s*</result_number>', verification_response)
+                if match:
+                    result_number = match.group(1)
+                    if result_number != "None":
+                        # 0-indexedに変換して結果を取得
+                        current_result = current_results[int(result_number) - 1]
+                    else:
+                        current_result = get_insurance_details(current_insurance['company_name'], current_insurance['product_name'])
+
+        # 目標の保険情報の処理
+        target_insurance = user_data.get('insurance_target_insurance')
+        target_result = None
+        if target_insurance:
+            target_text = f"{target_insurance['company_name']}の{target_insurance['product_name']}"
+            target_vector = oa.embedding([target_text])[0]
+            target_results = fa.get_insurance_info(db, target_vector, 5)
+            
+            target_search_text = "\n".join([
+                f"{i}. {result['company']}の{result['insurance_name']}" 
+                for i, result in enumerate(target_results, 1)
+            ])
+            
+            verify_prompt = gp.get_insurance_verification_prompt(target_search_text, target_text)
+            verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+            
+            if verification_response:
+                match = re.search(r'<result_number>\s*(\d+|None)\s*</result_number>', verification_response)
+                if match:
+                    result_number = match.group(1)
+                    if result_number != "None":
+                        target_result = target_results[int(result_number) - 1]
+                    else:
+                        target_result = get_insurance_details(target_insurance['company_name'], target_insurance['product_name'])
+        
+        if current_result and target_result:
+            # 保険情報が揃っている場合、提案を作成
+            insured_info = user_data.get('insurance_insured_info', {})
+            
+            # 提案生成プロンプトの作成
+            proposal_prompt = gp.get_insurance_proposal_prompt(
+                insured_info=insured_info,
+                current_insurance=current_result,
+                target_insurance=target_result
+            )
+            
+            # 提案の生成
+            proposal_response = oa.openai_chat("gpt-4o", proposal_prompt)
+            
+            if proposal_response:
+                # 各セクションを抽出
+                sections = {
+                    '提案方法': re.search(r'<proposal_method>(.*?)</proposal_method>', proposal_response, re.DOTALL),
+                    '提案話法': re.search(r'<proposal_script>(.*?)</proposal_script>', proposal_response, re.DOTALL),
+                    'メリット': re.search(r'<proposal_benefits>(.*?)</proposal_benefits>', proposal_response, re.DOTALL),
+                    '優劣判定': re.search(r'<comparison_score>(.*?)</comparison_score>', proposal_response, re.DOTALL),
+                    '総評と反論': re.search(r'<overall_evaluation>(.*?)</overall_evaluation>', proposal_response, re.DOTALL)
+                }
+                
+                # 各セクションのテキストを抽出し、整形
+                proposal_sections = {}
+                for title, match in sections.items():
+                    if match:
+                        proposal_sections[title] = match.group(1).strip()
+                    else:
+                        proposal_sections[title] = "情報なし"
+                
+                # 提案内容を整形
+                formatted_proposal = [
+                    "乗り換え提案が完了しました。\n",
+                    "【1. 提案方法】\n" + proposal_sections['提案方法'],
+                    "【2. 提案話法】\n" + proposal_sections['提案話法'],
+                    "【3. 乗り換えのメリット】\n" + proposal_sections['メリット'],
+                    "【4. 優劣判定】\n" + proposal_sections['優劣判定'],
+                    "【5. 総評と反論話法】\n" + proposal_sections['総評と反論'],
+                    "※AIによる提案内容は参考情報です。実際の保険商品の詳細や正確な情報は、各保険会社にお問い合わせください。",
+                    "【リセット】\n保険商品の乗り換えを提案します","まずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+                    "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者"
+                ]
+                
+                # 状態をリセット
+                fa.update_insurance_state(db, userId, transfer_status=1, should_delete=True)
+                
+                return formatted_proposal
+                
+        return ["申し訳ありません。提案の作成に失敗しました。\n再度お試しください。"]
+
+    except Exception as e:
+        logging.error(f"Error in create_proposal: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。\n再度お試しください。"]
+
+def get_insurance_details(company_name, product_name):
+    """
+    保険商品の詳細情報をAIウェブサーチで取得し、データベースに保存する関数
+    
+    Args:
+        company_name (str): 保険会社名
+        product_name (str): 商品名
+        
+    Returns:
+        dict: 保険商品の詳細情報を含む辞書。以下のキーを含む:
+            - company: 保険会社名
+            - insurance_name: 保険商品名
+            - content: 商品の詳細内容
+    """
+    try:
+        # プロンプトの準備
+        search_prompt = gp.get_insurance_product_search_details_prompt()
+        prompt = f"{search_prompt}\n\n保険会社名: {company_name}\n保険商品名: {product_name}"
+
+        # AIによる詳細情報の収集
+        response = oa.openai_chat(
+            openai_model="gpt-4o-search-preview",
+            prompt=prompt
+        )
+        
+        if not response:
+            raise ValueError("Failed to get response from AI search")
+
+        # 商品詳細情報の抽出
+        content_start = response.find("<product_details>")
+        content_end = response.find("</product_details>")
+
+        if content_start < 0 or content_end < 0:
+            raise ValueError("Failed to extract product details from response")
+
+        content = response[content_start + len("<product_details>"):content_end].strip()
+
+        if not content:
+            raise ValueError("Empty content extracted from response")
+
+        # 保険商品情報を構造化
+        insurance_info = {
+            "company": company_name,
+            "insurance_name": product_name,
+            "content": content,
+        }
+
+        # 保険情報DBエンドポイントへ送信
+        try:
+            response = requests.post(INSURANCE_DB_URL + "/insurance", json=insurance_info)
+            return insurance_info
+        
+        except Exception as e:
+            logging.error(f"Error in send_insurance_info: {str(e)}")
+            return None
+    
+    except Exception as e:
+        logging.error(f"Error in get_insurance_details: {str(e)}")
+        return None
 
 def cancel_proposal(userId):
     """保険商品の乗り換え提案をキャンセルし、初期状態に戻す関数"""
@@ -578,8 +749,7 @@ def event_postback(event,replyToken,userId,user_data):
     isRetryRP = user_data['isRetryRP']
     transfer_status = user_data.get('transfer_status', 0)
     if 1 <= transfer_status <= 4:
-        fa.set_transfer_status(db, userId, 0)
-        fa.delete_insurance_info(db, userId)
+        fa.update_insurance_state(db, userId, transfer_status=0, should_delete=True)
     if pending_action:
         text = cancel_update_sub(userId)
     elif isRetryRP:
@@ -689,8 +859,8 @@ def tr_text(userId,user_data):
     # 乗り換え提案の状態を1（被保険者の年齢と性別を質問中）に設定
     fa.update_insurance_state(db, userId, transfer_status=1)
     
-    return ["【モード変更】\n保険商品の乗り換えを提案します","まずは、想定される被保険者の年齢と性別を教えてください。また、その他の補足情報があれば教えてください",
-            "例：\n・年齢：30歳\n・性別：男性\n・結婚しており子供がいる"]
+    return ["【モード変更】\n保険商品の乗り換えを提案します","まずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+            "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者"]
 
 def rps_text(userId,user_data):
     """RPの設定を生成し、テキストを返す"""
