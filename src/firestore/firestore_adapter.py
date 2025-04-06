@@ -471,7 +471,6 @@ class FirestoreAdapter:
             - summary: 保険の概要
             - similarity: クエリとの類似度（query_vectorが指定された場合のみ）
         """
-        import numpy as np
         
         # insurancesコレクションの全batch_xドキュメントを取得
         batch_docs = db.collection('insurances').stream()

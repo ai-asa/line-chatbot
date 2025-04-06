@@ -971,7 +971,7 @@ class RegStripe:
     def start_trial(self,action,desired_plan,isTrialValid):
         if isTrialValid:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください\n(モード切替や「はい」以外の返信でキャンセルします)"]
+            return ["【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください\n(モード切替や「はい」以外の返信でキャンセルします)"]
         else:
             return ['トライアル期間が終了しています']
 
@@ -1185,7 +1185,7 @@ class messageText:
         for conv in convs:
             text = f"""
 <speaker>{conv['speaker']}</speaker>
-<massage>{conv['content']}</message>"""
+<message>{conv['content']}</message>"""
             text_list.append(text)
         return "".join(text_list)
 
@@ -1221,7 +1221,7 @@ class messageText:
         for conv in rp_history:
             text = f"""
 <speaker>{conv['speaker']}</speaker>
-<massage>{conv['content']}</message>"""
+<message>{conv['content']}</message>"""
             text_list.append(text)
         return "".join(text_list)
     
