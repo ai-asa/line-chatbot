@@ -536,7 +536,7 @@ def create_proposal(userId, user_data, replyToken):
         if current_result:
             content = current_result['content']
             text = ["現在の保険商品についての情報を収集しました",f"【現在の保険商品の情報】\n{content}","次に、乗り換え提案する保険商品の情報を収集します。\n\nこれには30秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
-            la.push_message(LINE_ACCESS_TOKEN, replyToken, text)
+            la.push_message(LINE_ACCESS_TOKEN, userId, text)
 
         # 目標の保険情報の処理
         target_insurance = user_data.get('insurance_target_insurance')
@@ -545,7 +545,7 @@ def create_proposal(userId, user_data, replyToken):
         if target_result:
             content = target_result['content']
             text = ["乗り換え提案する保険商品についての情報を収集しました",f"【乗り換え提案する保険商品の情報】\n{content}","最後に、乗り換え提案を作成します。\n\nしばらくお待ちください..."]
-            la.push_message(LINE_ACCESS_TOKEN, replyToken, text)
+            la.push_message(LINE_ACCESS_TOKEN, userId, text)
         
         if current_result and target_result:
             # 保険情報が揃っている場合、提案を作成
