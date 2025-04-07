@@ -1,4 +1,5 @@
 import requests
+import logging
 
 class LineAdapter:
     # LINE Messaging APIの制限
@@ -9,10 +10,18 @@ class LineAdapter:
         pass
 
     def reply_to_line(self, accesstoken, replyToken, text_list):
+        logging.info(f"Replying to LINE with replyToken: {replyToken}, message count: {len(text_list)}")
         headers = {
             'Content-Type': 'application/json; charset=UTF-8',
             'Authorization': f'Bearer {accesstoken}'
         }
+        
+        # メッセージの長さをチェック
+        if len(text_list) > self.MESSAGE_LIMIT:
+            logging.warning(f"Message count exceeds LINE limit: {len(text_list)} > {self.MESSAGE_LIMIT}")
+            # MESSAGE_LIMIT を超える場合は分割
+            text_list = text_list[:self.MESSAGE_LIMIT]
+            
         messages = [
             {'type': 'text', 'text': text} for text in text_list
         ]
@@ -20,7 +29,17 @@ class LineAdapter:
             'replyToken': replyToken,
             'messages': messages
         }
-        requests.post('https://api.line.me/v2/bot/message/reply', headers=headers, json=data)
+        logging.info(f"Sending LINE reply with data: {data}")
+        
+        # レスポンスを受け取る
+        response = requests.post('https://api.line.me/v2/bot/message/reply', headers=headers, json=data)
+        
+        if response.status_code != 200:
+            logging.error(f"LINE API error: {response.status_code} - {response.text}")
+        else:
+            logging.info(f"LINE reply successful: {response.status_code}")
+        
+        return response
 
     def push_message(self, accesstoken, to_user_id, text_list):
         """
@@ -31,6 +50,7 @@ class LineAdapter:
             to_user_id (str): 送信先のユーザーID
             text_list (list): 送信するテキストのリスト
         """
+        logging.info(f"Pushing message to LINE user: {to_user_id}, message count: {len(text_list)}")
         headers = {
             'Content-Type': 'application/json; charset=UTF-8',
             'Authorization': f'Bearer {accesstoken}'
@@ -52,7 +72,11 @@ class LineAdapter:
                         'to': to_user_id,
                         'messages': messages
                     }
-                    requests.post('https://api.line.me/v2/bot/message/push', headers=headers, json=data)
+                    logging.info(f"Sending LINE push chunk with {len(current_chunk)} messages")
+                    response = requests.post('https://api.line.me/v2/bot/message/push', headers=headers, json=data)
+                    
+                    if response.status_code != 200:
+                        logging.error(f"LINE API push error: {response.status_code} - {response.text}")
                     
                 # 新しいチャンクを開始
                 current_chunk = [text]
@@ -71,4 +95,10 @@ class LineAdapter:
                 'to': to_user_id,
                 'messages': messages
             }
-            requests.post('https://api.line.me/v2/bot/message/push', headers=headers, json=data)
+            logging.info(f"Sending final LINE push chunk with {len(current_chunk)} messages")
+            response = requests.post('https://api.line.me/v2/bot/message/push', headers=headers, json=data)
+            
+            if response.status_code != 200:
+                logging.error(f"LINE API final push error: {response.status_code} - {response.text}")
+            else:
+                logging.info(f"LINE final push successful: {response.status_code}")

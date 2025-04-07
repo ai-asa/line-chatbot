@@ -19,6 +19,12 @@ from src.stripe.stripe_adapter import StripeAdapter
 import random
 import logging
 
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 load_dotenv()
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
 INSURANCE_DB_URL = os.getenv('INSURANCE_DB_URL')
@@ -305,10 +311,17 @@ def event_message(event,replyToken,userId,user_data):
     else:
         res = ["テキストメッセージ以外には対応していません"]
     try:
-        la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+        # 空のリストは送信しない（すでに別の方法で送信済み）
+        if res and len(res) > 0:
+            logging.info(f"Replying to message event with {len(res)} messages")
+            la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+        else:
+            logging.info("Skipping reply as response list is empty")
     except Exception as e:
-        print(e)
-        la.push_message(LINE_ACCESS_TOKEN, userId, res)
+        logging.error(f"Error in event_message: {str(e)}")
+        # 返信に失敗した場合はプッシュメッセージを試みる
+        if res and len(res) > 0:
+            la.push_message(LINE_ACCESS_TOKEN, userId, res)
     return True
     # except Exception as e:
     #     print(e)
@@ -565,13 +578,24 @@ def create_proposal(userId, user_data, replyToken):
                 # 状態をリセット
                 fa.update_insurance_state(db, userId, transfer_status=1, should_delete=True)
                 
-                return formatted_proposal
+                # 提案内容を直接送信（replyTokenは有効期限が短いためpush_messageを使用）
+                logging.info(f"Sending insurance proposal to user: {userId}")
+                la.push_message(LINE_ACCESS_TOKEN, userId, formatted_proposal)
                 
-        return ["申し訳ありません。提案の作成に失敗しました。\n再度お試しください。"]
+                # 空のリストを返して、event_messageの外側で二重送信しないようにする
+                return []
+                
+        # 提案作成に失敗した場合はエラーメッセージを表示
+        error_message = ["申し訳ありません。提案の作成に失敗しました。\n再度お試しください。"]
+        logging.error(f"Failed to create proposal for user: {userId}")
+        la.push_message(LINE_ACCESS_TOKEN, userId, error_message)
+        return []
 
     except Exception as e:
         logging.error(f"Error in create_proposal: {str(e)}")
-        return ["申し訳ありません。エラーが発生しました。\n再度お試しください。"]
+        error_message = ["申し訳ありません。エラーが発生しました。\n再度お試しください。"]
+        la.push_message(LINE_ACCESS_TOKEN, userId, error_message)
+        return []
 
 def get_insurance_details(company_name, product_name):
     """
