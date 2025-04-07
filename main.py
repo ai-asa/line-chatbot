@@ -357,7 +357,7 @@ def extract_insurance_info(mesText):
     """保険会社名、保険商品名、保険料を抽出する共通関数"""
     try:
         # 保険料を抽出（数字と単位「円」を含む部分を探す）
-        premium_match = re.search(r'(\d{1,3}(,\d{3})*)\s*円', mesText)
+        premium_match = re.search(r'(\d{1,3}(,\d{3})*|\d+)\s*円', mesText)
         premium = premium_match.group(1) if premium_match else None
 
         if not premium:
@@ -389,7 +389,7 @@ def process_current_insurance(userId, mesText):
         company_name, product_name, premium = extract_insurance_info(mesText)
 
         if not company_name or not product_name or not premium:
-            return ["申し訳ありません。該当する保険会社名、商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+            return ["申し訳ありません。入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
 
         # Firestoreに保存
         fa.update_insurance_state(db, userId,
@@ -421,7 +421,7 @@ def process_target_insurance(userId, mesText):
         company_name, product_name, premium = extract_insurance_info(mesText)
 
         if not company_name or not product_name or not premium:
-            return ["申し訳ありません。該当する保険会社名、商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+            return ["入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
 
         # Firestoreに保存
         fa.update_insurance_state(db, userId,
