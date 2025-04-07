@@ -301,16 +301,19 @@ def event_message(event,replyToken,userId,user_data):
     res = []
     mesType = event['message']['type']
     if mesType == "text":
-        res = message_process(event,userId,user_data)
+        res = message_process(event,userId,user_data,replyToken)
     else:
         res = ["テキストメッセージ以外には対応していません"]
-    la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+    try:
+        la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+    except:
+        la.push_message(LINE_ACCESS_TOKEN, userId, res)
     return True
     # except Exception as e:
     #     print(e)
     #     return False
     
-def message_process(event,userId,user_data):
+def message_process(event,userId,user_data,replyToken):
     mesText = event['message']['text']
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
@@ -331,7 +334,7 @@ def message_process(event,userId,user_data):
     elif transfer_status == 3:
         return process_target_insurance(userId, mesText)
     elif transfer_status == 4:
-        return process_execute_proposal(userId, user_data, mesText)
+        return process_execute_proposal(userId, user_data, mesText, replyToken)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
@@ -443,21 +446,21 @@ def process_target_insurance(userId, mesText):
         print(f"Error in process_target_insurance: {str(e)}")
         return ["申し訳ありません。エラーが発生しました。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
 
-def process_execute_proposal(userId,user_data,mesText):
+def process_execute_proposal(userId,user_data,mesText,replyToken):
     """乗り換え提案を実行する関数"""
     if mesText == 'はい':
-        return create_proposal(userId,user_data)
+        return create_proposal(userId,user_data,replyToken)
     else:
         return cancel_proposal(userId)
 
 
-def create_proposal(userId, user_data):
+def create_proposal(userId, user_data, replyToken):
     """提案を作成する関数"""
     try:
         # 初期メッセージを送信
         res = ["以上のデータをもとに、乗り換え提案を作成します","保険商品の情報を収集しています","これには30秒~60秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
         # テキストをプッシュ
-        la.push_message(LINE_ACCESS_TOKEN, userId, res)
+        la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
 
         # 現在の保険情報の処理
         current_insurance = user_data.get('insurance_current_insurance')
