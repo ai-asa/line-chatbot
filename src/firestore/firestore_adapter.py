@@ -423,6 +423,7 @@ class FirestoreAdapter:
                 2: 現在の保険会社&保険商品名と値段を質問中
                 3: 乗り換え先の保険商品名と値段を質問中
                 4: 情報に誤りがないか、処理を実行するかを質問中
+                5: 提案が完了した状態
             info_type (str, optional): 情報の種類 ('insured_info' | 'current_insurance' | 'target_insurance')
             info_data (dict, optional): 保存するデータ
             should_delete (bool, optional): 保険情報を削除するかどうか

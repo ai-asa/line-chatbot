@@ -349,6 +349,8 @@ def message_process(event,userId,user_data,replyToken):
         return process_target_insurance(userId, mesText)
     elif transfer_status == 4:
         return process_execute_proposal(userId, user_data, mesText, replyToken)
+    elif transfer_status == 5:
+        return ["提案が終了しました。\n\n新たな条件で提案を作成する場合は再度、メニュー「乗換の提案」ボタンをタップしてください。"]
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
@@ -467,68 +469,83 @@ def process_execute_proposal(userId,user_data,mesText,replyToken):
     else:
         return cancel_proposal(userId)
 
+def search_insurance_info(insurance_data):
+    """
+    保険情報を検索し、最も適切な結果を返す関数
+    
+    Args:
+        insurance_data (dict): 保険情報を含む辞書 (company_name, product_nameを含む)
+        db: Firestoreデータベースインスタンス
+        oa: OpenAIアダプターインスタンス
+        
+    Returns:
+        dict or None: 検索された保険情報。見つからない場合はNone
+    """
+    if not insurance_data:
+        return None
+        
+    search_text = f"{insurance_data['company_name']}の{insurance_data['product_name']}"
+    vector = oa.embedding([search_text])[0]
+    search_results = fa.get_insurance_info(db, vector, 5)
+    
+    # 検索結果のテキスト化（番号付き）
+    search_text_numbered = "\n".join([
+        f"{i}. {result['company']}の{result['insurance_name']}" 
+        for i, result in enumerate(search_results, 1)
+    ])
+    
+    # AI による検証
+    verify_prompt = gp.get_insurance_verification_prompt(search_text_numbered, search_text)
+    verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+    
+    if verification_response:
+        match = re.search(r'<result_number>\s*(\d+|None)\s*</result_number>', verification_response)
+        if match:
+            result_number = match.group(1)
+            if result_number != "None":
+                # 選択された保険情報を取得
+                selected_insurance = search_results[int(result_number) - 1]
+                
+                # contentの内容を評価
+                content_verify_prompt = gp.get_insurance_content_verification_prompt(selected_insurance['content'])
+                content_verification = oa.openai_chat("gpt-4o", content_verify_prompt)
+                
+                # 内容が十分な場合は選択された保険情報を返す
+                if content_verification and 'true' in content_verification.lower():
+                    return selected_insurance
+                # 内容が不十分な場合は新しい情報を取得
+                else:
+                    return get_insurance_details(insurance_data['company_name'], insurance_data['product_name'])
+            else:
+                return get_insurance_details(insurance_data['company_name'], insurance_data['product_name'])
+    
+    return None
 
 def create_proposal(userId, user_data, replyToken):
     """提案を作成する関数"""
     try:
         # 初期メッセージを送信
-        res = ["以上のデータをもとに、乗り換え提案を作成します","保険商品の情報を収集しています","これには30秒~60秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
+        res = ["以上のデータをもとに、乗り換え提案を作成します","まず、現在の保険商品の情報を収集しています","これには30秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
         # テキストをプッシュ
         la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
 
         # 現在の保険情報の処理
         current_insurance = user_data.get('insurance_current_insurance')
-        current_result = None
-        if current_insurance:
-            current_text = f"{current_insurance['company_name']}の{current_insurance['product_name']}"
-            current_vector = oa.embedding([current_text])[0]
-            current_results = fa.get_insurance_info(db, current_vector, 5)
-            
-            # 検索結果のテキスト化（番号付き）
-            current_search_text = "\n".join([
-                f"{i}. {result['company']}の{result['insurance_name']}" 
-                for i, result in enumerate(current_results, 1)
-            ])
-            
-            # AI による検証
-            verify_prompt = gp.get_insurance_verification_prompt(current_search_text, current_text)
-            verification_response = oa.openai_chat("gpt-4o", verify_prompt)
-            
-            # 正規表現で結果を抽出
-            if verification_response:
-                match = re.search(r'<result_number>\s*(\d+|None)\s*</result_number>', verification_response)
-                if match:
-                    result_number = match.group(1)
-                    if result_number != "None":
-                        # 0-indexedに変換して結果を取得
-                        current_result = current_results[int(result_number) - 1]
-                    else:
-                        current_result = get_insurance_details(current_insurance['company_name'], current_insurance['product_name'])
+        current_result = search_insurance_info(current_insurance)
+        
+        if current_result:
+            content = current_result['content']
+            text = ["現在の保険商品についての情報を収集しました",f"【現在の保険商品の情報】\n{content}","次に、乗り換え提案する保険商品の情報を収集します。\n\nこれには30秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
+            la.push_message(LINE_ACCESS_TOKEN, replyToken, text)
 
         # 目標の保険情報の処理
         target_insurance = user_data.get('insurance_target_insurance')
-        target_result = None
-        if target_insurance:
-            target_text = f"{target_insurance['company_name']}の{target_insurance['product_name']}"
-            target_vector = oa.embedding([target_text])[0]
-            target_results = fa.get_insurance_info(db, target_vector, 5)
-            
-            target_search_text = "\n".join([
-                f"{i}. {result['company']}の{result['insurance_name']}" 
-                for i, result in enumerate(target_results, 1)
-            ])
-            
-            verify_prompt = gp.get_insurance_verification_prompt(target_search_text, target_text)
-            verification_response = oa.openai_chat("gpt-4o", verify_prompt)
-            
-            if verification_response:
-                match = re.search(r'<result_number>\s*(\d+|None)\s*</result_number>', verification_response)
-                if match:
-                    result_number = match.group(1)
-                    if result_number != "None":
-                        target_result = target_results[int(result_number) - 1]
-                    else:
-                        target_result = get_insurance_details(target_insurance['company_name'], target_insurance['product_name'])
+        target_result = search_insurance_info(target_insurance)
+        
+        if target_result:
+            content = target_result['content']
+            text = ["乗り換え提案する保険商品についての情報を収集しました",f"【乗り換え提案する保険商品の情報】\n{content}","最後に、乗り換え提案を作成します。\n\nしばらくお待ちください..."]
+            la.push_message(LINE_ACCESS_TOKEN, replyToken, text)
         
         if current_result and target_result:
             # 保険情報が揃っている場合、提案を作成
@@ -547,10 +564,10 @@ def create_proposal(userId, user_data, replyToken):
             if proposal_response:
                 # 各セクションを抽出
                 sections = {
+                    '特徴解説': re.search(r'<feature_analysis>(.*?)</feature_analysis>', proposal_response, re.DOTALL),
+                    'メリット・デメリット分析': re.search(r'<merit_demerits>(.*?)</merit_demerits>', proposal_response, re.DOTALL),
+                    '評価': re.search(r'<evaluation_score>(.*?)</evaluation_score>', proposal_response, re.DOTALL),
                     '提案方法': re.search(r'<proposal_method>(.*?)</proposal_method>', proposal_response, re.DOTALL),
-                    '提案話法': re.search(r'<proposal_script>(.*?)</proposal_script>', proposal_response, re.DOTALL),
-                    'メリット': re.search(r'<proposal_benefits>(.*?)</proposal_benefits>', proposal_response, re.DOTALL),
-                    '優劣判定': re.search(r'<comparison_score>(.*?)</comparison_score>', proposal_response, re.DOTALL),
                     '総評と反論': re.search(r'<overall_evaluation>(.*?)</overall_evaluation>', proposal_response, re.DOTALL)
                 }
                 
@@ -564,19 +581,17 @@ def create_proposal(userId, user_data, replyToken):
                 
                 # 提案内容を整形
                 formatted_proposal = [
-                    "乗り換えを以下のように提案します。",
-                    "\n\n【1. 提案方法】\n" + proposal_sections['提案方法'],
-                    "\n\n【2. 提案話法】\n" + proposal_sections['提案話法'],
-                    "\n\n【3. 乗り換えのメリット】\n" + proposal_sections['メリット'],
-                    "\n\n【4. 優劣判定】\n" + proposal_sections['優劣判定'],
-                    "\n\n【5. 総評と反論話法】\n" + proposal_sections['総評と反論'],
-                    "※AIによる提案内容は参考情報です。実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。",
-                    "【リセット】\n保険商品の乗り換えを提案します\n\nまずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
-                    "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者"
+                    "乗り換え提案を作成しました。",
+                    "【1. 特徴解説】\n" + proposal_sections['特徴解説'],
+                    "【2. メリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析'],
+                    "【3. 評価】\n" + proposal_sections['評価'],
+                    "【4. 提案方法】\n" + proposal_sections['提案方法'],
+                    "【5. 総評と反論】\n" + proposal_sections['総評と反論'],
+                    "※AIによる提案内容は参考情報です。実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。"
                 ]
                 
                 # 状態をリセット
-                fa.update_insurance_state(db, userId, transfer_status=1, should_delete=True)
+                fa.update_insurance_state(db, userId, transfer_status=5, should_delete=True)
                 
                 # 提案内容を直接送信（replyTokenは有効期限が短いためpush_messageを使用）
                 logging.info(f"Sending insurance proposal to user: {userId}")
@@ -795,7 +810,7 @@ def mode_change(userId,postType,user_data):
     elif postType == "ta":
         judg,text = mode_ta(userId,user_data,current_plan)
     elif postType == "tr":
-        judg,text = mode_tr(userId,user_data,current_plan)
+        judg,text = mode_tr(userId,current_plan)
     elif postType == "gs":
         judg,text = mode_gs(current_plan)
     elif postType == "rps":
@@ -836,11 +851,11 @@ def mode_ta(userId,user_data,current_plan):
     else:
         return True, ta_text(userId,user_data)
     
-def mode_tr(userId,user_data,current_plan):
+def mode_tr(userId,current_plan):
     if current_plan in ['free','980']:
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
-        return True, tr_text(userId,user_data)
+        return True, tr_text(userId)
 
 def mode_rps(userId,current_plan,user_data):
     if current_plan in ['free','980']:
@@ -860,7 +875,7 @@ def ta_text(userId,user_data):
     """
     return [""]
 
-def tr_text(userId,user_data):
+def tr_text(userId):
     """
     保険商品の乗り換え提案機能の状態を設定し、
     被保険者の現在加入している保険商品名とその保険会社名を質問するリプライを返す
