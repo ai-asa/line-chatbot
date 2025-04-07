@@ -552,11 +552,11 @@ def create_proposal(userId, user_data, replyToken):
                 # 提案内容を整形
                 formatted_proposal = [
                     "乗り換えを以下のように提案します。",
-                    "\n\n【1. 提案方法】\n" + proposal_sections['提案方法'] 
-                    + "\n\n【2. 提案話法】\n" + proposal_sections['提案話法']
-                    + "\n\n【3. 乗り換えのメリット】\n" + proposal_sections['メリット']
-                    + "\n\n【4. 優劣判定】\n" + proposal_sections['優劣判定']
-                    + "\n\n【5. 総評と反論話法】\n" + proposal_sections['総評と反論'],
+                    "\n\n【1. 提案方法】\n" + proposal_sections['提案方法'],
+                    "\n\n【2. 提案話法】\n" + proposal_sections['提案話法'],
+                    "\n\n【3. 乗り換えのメリット】\n" + proposal_sections['メリット'],
+                    "\n\n【4. 優劣判定】\n" + proposal_sections['優劣判定'],
+                    "\n\n【5. 総評と反論話法】\n" + proposal_sections['総評と反論'],
                     "※AIによる提案内容は参考情報です。実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。",
                     "【リセット】\n保険商品の乗り換えを提案します\n\nまずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
                     "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者"
