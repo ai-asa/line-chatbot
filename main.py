@@ -332,6 +332,7 @@ def message_process(event,userId,user_data,replyToken):
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
     transfer_status = user_data.get('transfer_status', 0)
+    talk_status = user_data.get('talk_status', 0)
 
     if pending_action:
         return sub_act(pending_action,mesText,userId,user_data)
@@ -351,6 +352,9 @@ def message_process(event,userId,user_data,replyToken):
         return process_execute_proposal(userId, user_data, mesText, replyToken)
     elif transfer_status == 5:
         return ["提案が終了しました。\n\n新たな条件で提案を作成する場合は再度、メニュー「乗換の提案」ボタンをタップしてください。"]
+    # talk_statusに基づく処理を追加
+    elif talk_status == 1:
+        return process_talk_info(userId, mesText)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
@@ -468,6 +472,98 @@ def process_execute_proposal(userId,user_data,mesText,replyToken):
         return create_proposal(userId,user_data,replyToken)
     else:
         return cancel_proposal(userId)
+
+def process_talk_info(userId, mesText):
+    """トークモードでの個人情報を処理する関数"""
+    try:
+        # テキストをベクトル化
+        vector = oa.embedding([mesText])[0]
+        
+        # ベクトル検索で関連記事を取得
+        search_results = fa.get_article_info(db, vector, 5)  # 上位5件を取得
+        
+        isNotRelated = True
+        if search_results:
+            isNotRelated = False
+        
+        # 検索結果からcontentのリストを作成
+        contents = [result['content'] for result in search_results]
+        
+        # AIによる関連性の評価
+        verify_prompt = gp.get_talk_content_verification_prompt(mesText, contents)
+        verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+        
+        # 関連性のある記事番号を抽出
+        relevant_numbers = []
+        if not verification_response:
+            return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+        match = re.search(r'<relevant_numbers>\s*(.*?)\s*</relevant_numbers>', verification_response, re.DOTALL)
+        if not match:
+            return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+        numbers_str = match.group(1).strip()
+        if numbers_str.lower() == 'none':
+            isNotRelated = True
+        else:
+            # カンマ区切りの番号をリストに変換
+            relevant_numbers = [int(num.strip()) for num in numbers_str.split(',')]
+        
+        # 返信メッセージを作成
+        messages = ["ありがとうございます。\nご提供いただいた情報を保存しました"]
+        messages.append("また、お客様情報に関連して、保険提案につながる可能性のある話題を調査しました")
+        
+        # 関連記事情報を格納するリスト
+        related_articles = []
+        
+        if not relevant_numbers:
+            isNotRelated = True
+        
+        if isNotRelated:
+            # AIによる話題生成（ネット検索モデルを使用）
+            generate_prompt = gp.get_talk_topic_generation_prompt(mesText)
+            generated_response = oa.openai_chat("gpt-4o-search-preview", generate_prompt)
+            
+            if not generated_response:
+                return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+            
+            # 生成された話題を抽出
+            topics = []
+            for topic_num in ['first', 'second', 'third']:
+                topic_match = re.search(f'<{topic_num}_topic>(.*?)</{topic_num}_topic>', generated_response, re.DOTALL)
+                if topic_match:
+                    topic = topic_match.group(1).strip()
+                    if topic:
+                        topics.append(topic)
+            
+            if not topics:
+                return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+            
+            # 生成された話題をメッセージに追加
+            for i, topic in enumerate(topics, 1):
+                messages.append(f"{i}. {topic}")
+                related_articles.append({'content': topic})
+        else:
+            # 関連性のある記事を番号付きで追加
+            for i, num in enumerate(relevant_numbers, 1):
+                if 1 <= num <= len(contents):
+                    content = contents[num-1]
+                    messages.append(f"{i}. {content}")
+                    related_articles.append({'content': content})
+        
+        messages.append("\nこの内容を基に、保険提案トークを作成しますか？\nはい/いいえ で回答してください。")
+        
+        # Firestoreに個人情報と関連記事を保存
+        fa.update_talk_state(db, userId, 
+            talk_status=2,  # 次の状態へ
+            info_type='personal_info',
+            info_data={'info': mesText},
+            related_articles=related_articles
+        )
+        
+        return messages
+        
+    except Exception as e:
+        logging.error(f"Error in process_talk_info: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください。"]
 
 def search_insurance_info(insurance_data):
     """
@@ -845,11 +941,11 @@ def mode_gs(current_plan):
     else:
         return True, ["【モード変更】\nゼロコンAIが会話形式で様々な質問、ご相談に対応します"]
 
-def mode_ta(userId,user_data,current_plan):
+def mode_ta(userId,current_plan):
     if current_plan in ['free','980']:
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
-        return True, ta_text(userId,user_data)
+        return True, ta_text(userId)
     
 def mode_tr(userId,current_plan):
     if current_plan in ['free','980']:
@@ -869,11 +965,16 @@ def mode_rpr(userId,current_plan,user_data):
     else:
         return True, rpr_text(userId,user_data)
 
-def ta_text(userId,user_data):
+def ta_text(userId):
     """
+    トークモードの状態を設定し、個人情報を質問するリプライを返す
+    """
+    # トークモードの状態を1（個人情報を質問中）に設定
+    fa.update_talk_state(db, userId, talk_status=1)
     
-    """
-    return [""]
+    return ["【モード変更】\nゼロコンAIが保険提案トークを考えます。",
+            "まずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+            "例：\n年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都"]
 
 def tr_text(userId):
     """
@@ -883,7 +984,7 @@ def tr_text(userId):
     # 乗り換え提案の状態を1（被保険者の年齢と性別を質問中）に設定
     fa.update_insurance_state(db, userId, transfer_status=1)
     
-    return ["【モード変更】\n保険商品の乗り換えを提案します","まずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+    return ["【モード変更】\nゼロコンAIが保険商品の乗り換えを提案します","まずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
             "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者"]
 
 def rps_text(userId,user_data):

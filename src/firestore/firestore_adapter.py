@@ -195,7 +195,9 @@ class FirestoreAdapter:
             'transfer_status': 0,
             'insurance_insured_info': None,
             'insurance_current_insurance': None,
-            'insurance_target_insurance': None
+            'insurance_target_insurance': None,
+            'talk_status': 0,  # トークモードの状態を管理するフィールド
+            'talk_personal_info': None,  # トークモードでの個人情報を保存するフィールド
         }
 
     def get_user_data(self, db, user_id, data_limit, rp_data_limit):
@@ -524,3 +526,116 @@ class FirestoreAdapter:
         
         # ベクトル検索が指定されていない場合は、単純にlimit件を返す
         return all_insurance_info[:limit]
+
+    def update_talk_state(self, db, user_id: str, talk_status: int = None, info_type: str = None, info_data: dict = None, related_articles: list = None, should_delete: bool = False):
+        """トークモードの状態と情報を一括で更新する関数
+        
+        Args:
+            db: Firestoreのデータベースインスタンス
+            user_id (str): ユーザーID
+            talk_status (int, optional): 状態を示す数値
+                0: 未選択/初期状態
+                1: 個人情報を質問中
+                2: 通常会話中
+            info_type (str, optional): 情報の種類 ('personal_info' | その他必要な情報タイプ)
+            info_data (dict, optional): 保存するデータ
+            related_articles (list, optional): 関連記事のリスト
+            should_delete (bool, optional): トーク情報を削除するかどうか
+        """
+        doc_ref = db.collection('userIds').document(user_id)
+        update_data = {}
+
+        # talk_statusの更新
+        if talk_status is not None:
+            update_data.update({
+                'talk_status': talk_status,
+                'botType': 'ta'
+            })
+
+        # トーク情報の更新
+        if info_type and info_data and not should_delete:
+            update_data[f'talk_{info_type}'] = info_data
+
+        # 関連記事情報の更新
+        if related_articles is not None:
+            update_data['talk_related_articles'] = related_articles
+
+        # トーク情報の削除
+        if should_delete:
+            update_data.update({
+                'talk_status': 0,
+                'talk_personal_info': None,
+                'talk_related_articles': None
+            })
+
+        # データの更新（一括で実行）
+        if update_data:
+            doc_ref.set(update_data, merge=True)
+
+    def get_article_info(self, db, query_vector=None, limit=5):
+        """記事情報をベクトル検索で取得する
+
+        Args:
+            db: Firestoreのデータベースインスタンス
+            query_vector (list, optional): 検索クエリのベクトル表現。Defaults to None.
+            limit (int, optional): 返す結果の最大件数。Defaults to 5.
+
+        Returns:
+            list: 記事情報のリスト。query_vectorが指定された場合は類似度順にソートされる。
+            各要素は以下のキーを含む辞書:
+            - title: 記事タイトル
+            - content: 記事の内容
+            - url: 記事のURL（存在する場合）
+            - similarity: クエリとの類似度（query_vectorが指定された場合のみ）
+        """
+        
+        # articlesコレクションのessential_infoドキュメントを取得
+        doc_ref = db.collection('articles').document('essential_info')
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return []
+        
+        doc_data = doc.to_dict()
+        if 'info_list' not in doc_data:
+            return []
+            
+        info_list = doc_data['info_list']
+        all_article_info = []
+        
+        # info_listの各番号キーから記事情報を取得
+        if isinstance(info_list, dict):
+            # 番号キーの値（記事情報）をリストに追加
+            all_article_info.extend(info_list.values())
+        
+        # ベクトル検索が指定された場合
+        if query_vector is not None:
+            # クエリベクトルをNumPy配列に変換
+            query_array = np.array(query_vector)
+            
+            # 各記事情報に対して類似度を計算
+            results = []
+            for info in all_article_info:
+                if 'embedding' not in info:
+                    continue
+                    
+                # 埋め込みベクトルをNumPy配列に変換
+                embedding_array = np.array(info['embedding'])
+                
+                # ユークリッド距離を計算（L2ノルム）
+                distance = np.linalg.norm(query_array - embedding_array)
+                
+                # 距離を0-1の類似度に変換（1が最も類似）
+                similarity = 1 / (1 + distance)
+                
+                # 情報をコピーして類似度を追加
+                info_with_similarity = info.copy()
+                info_with_similarity['similarity'] = similarity
+                results.append((similarity, info_with_similarity))
+            
+            # 類似度でソートして上位limit件を返す（類似度の降順）
+            results.sort(key=lambda x: x[0], reverse=True)
+            return [info for _, info in results[:limit]]
+        
+        # ベクトル検索が指定されていない場合は、単純にlimit件を返す
+        return all_article_info[:limit]
