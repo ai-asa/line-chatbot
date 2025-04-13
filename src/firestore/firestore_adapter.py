@@ -1,5 +1,6 @@
 import datetime
 from firebase_admin import firestore
+import numpy as np
 
 class FirestoreAdapter:
 
@@ -130,7 +131,7 @@ class FirestoreAdapter:
             return "fr"
 
     def update_history(self, db, userId, data_limit, user=None, assistant=None):
-
+        """通常の会話履歴を更新する"""
         userIds_ref = db.collection('userIds').document(userId)
         conversations_ref = userIds_ref.collection('conversations')
 
@@ -142,25 +143,19 @@ class FirestoreAdapter:
                 "speaker": 'user',
                 "content": user
             }
+            conversations_ref.add(user_message)
+
         if assistant:
             assistant_message = {
                 "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
                 "speaker": 'assistant',
-                "content": assistant    
+                "content": assistant
             }
-        if user_message and assistant_message:
-            new_message = [user_message, assistant_message]
-        elif user_message:
-            new_message = user_message
-        elif assistant_message:
-            new_message = assistant_message
+            conversations_ref.add(assistant_message)
 
         # ユーザードキュメントが存在しない場合は初期化
         if not userIds_ref.get().exists:
             self.initialize_user_data(db, userId)
-
-        # conversationsサブコレクションに新しいメッセージを追加
-        conversations_ref.add(new_message)
 
         # メッセージを timestamp の降順で取得
         snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).get()
@@ -193,15 +188,19 @@ class FirestoreAdapter:
             "trial_start": None,
             "trial_end": None,
             "isTrialValid": True,
-            "conversations": [],
             "original_sub_status": "free",
             'isAlreadyRP': False,
             'rp_setting': None,
-            'rp_history': [],
-            'isRetryRP': False
+            'isRetryRP': False,
+            'transfer_status': 0,
+            'insurance_insured_info': None,
+            'insurance_current_insurance': None,
+            'insurance_target_insurance': None,
+            'talk_status': 0,  # トークモードの状態を管理するフィールド
+            'talk_personal_info': None,  # トークモードでの個人情報を保存するフィールド
         }
 
-    def get_user_data(self, db, user_id, data_limit):
+    def get_user_data(self, db, user_id, data_limit, rp_data_limit):
         """
         指定した user_id に紐づくすべてのデータを取得します。
         サブステータスのチェックと更新（get_sub_status の処理）も含めています。
@@ -219,7 +218,7 @@ class FirestoreAdapter:
             
             # 欠けているフィールドを検出し、update_dataに追加
             for field, default_value in initial_fields.items():
-                if field not in user_data:
+                if field not in user_data and field not in ['conversations', 'rp_history']:
                     update_data[field] = default_value
                     user_data[field] = default_value
                     if field == 'original_sub_status':
@@ -263,9 +262,15 @@ class FirestoreAdapter:
             
             # conversations サブコレクションのデータ取得
             conversations_ref = user_ref.collection('conversations')
-            snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(data_limit).get()
+            snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.ASCENDING).limit(data_limit).get()
             conversations = [snapshot.to_dict() for snapshot in snapshots]
             user_data['conversations'] = conversations
+            
+            # rp_history サブコレクションのデータ取得
+            rp_history_ref = user_ref.collection('rp_history')
+            rp_snapshots = rp_history_ref.order_by('timestamp', direction=firestore.Query.ASCENDING).limit(rp_data_limit).get()
+            rp_history = [snapshot.to_dict() for snapshot in rp_snapshots]
+            user_data['rp_history'] = rp_history
             
             return user_data
         else:
@@ -316,24 +321,48 @@ class FirestoreAdapter:
             "trial_end": trial_end_jst.strftime('%Y年%m月%d日%H時%M分')
         }
 
-    def reset_rp_history(self, db, user_id, isResetHistory=None, rp_setting=None, isAlreadyRP: bool = None, isRetryRP: bool = None):
-        """RPの会話履歴とRP設定をリセットする"""
-        doc_ref = db.collection('users').document(user_id)
+    def reset_rp_history(self, db, user_id, isResetHistory=False, rp_setting=None, isAlreadyRP: bool = None, isRetryRP: bool = None):
+        """RPの会話履歴とRP設定をリセットする
+        
+        ・必要なフィールド更新は単体のupdateで行い、
+        サブコレクションの削除はバッチ書き込みで独立して実行する。
+        ・トランザクションは、読み取りと書き込みの整合性が必要な場合に利用すべきで、
+        単純な削除処理には不要です。
+        """
+        doc_ref = db.collection('userIds').document(user_id)
         update_data = {}
-        if isResetHistory:
-            update_data['rp_history'] = []
+        
         if rp_setting is not None:
             update_data['rp_setting'] = rp_setting
         if isAlreadyRP is not None:
             update_data['isAlreadyRP'] = isAlreadyRP
         if isRetryRP is not None:
             update_data['isRetryRP'] = isRetryRP
+
+        # まずドキュメントの更新（フィールドの更新はアトミックなので十分）
         if update_data:
-            doc_ref.update(update_data)
+            try:
+                doc_ref.update(update_data)
+            except Exception as e:
+                print(f"Error updating user data: {e}")
+                raise
+
+        # サブコレクションのrp_historyの削除は、トランザクション内でなくバッチ処理で独立して実行
+        if isResetHistory:
+            try:
+                batch = db.batch()
+                rp_history_ref = doc_ref.collection('rp_history')
+                docs = rp_history_ref.get()
+                for doc in docs:
+                    batch.delete(doc.reference)
+                batch.commit()
+            except Exception as e:
+                print(f"Error deleting rp_history subcollection: {e}")
+                raise
 
     def set_initial_rp(self, db, user_id, rp_setting):
         """初めてのRP設定を保存する"""
-        doc_ref = db.collection('users').document(user_id)
+        doc_ref = db.collection('userIds').document(user_id)
         doc_ref.update({
             'isAlreadyRP': True,
             'rp_setting': rp_setting,
@@ -341,6 +370,7 @@ class FirestoreAdapter:
         })
 
     def update_rp_history(self, db, userId, rp_data_limit, salesperson=None, customer=None):
+        """RPの会話履歴を更新する"""
         userIds_ref = db.collection('userIds').document(userId)
         history_ref = userIds_ref.collection('rp_history')
 
@@ -352,25 +382,19 @@ class FirestoreAdapter:
                 "speaker": 'salesperson',
                 "content": salesperson
             }
+            history_ref.add(salesperson_message)
+
         if customer:
             customer_message = {
                 "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
                 "speaker": 'you',
                 "content": customer
             }
-        if salesperson_message and customer_message:
-            new_message = [salesperson_message, customer_message]
-        elif salesperson_message:
-            new_message = salesperson_message
-        elif customer_message:
-            new_message = customer_message
+            history_ref.add(customer_message)
 
         # ユーザードキュメントが存在しない場合は初期化
         if not userIds_ref.get().exists:
             self.initialize_user_data(db, userId)
-
-        # rp_historyサブコレクションに新しいメッセージを追加
-        history_ref.add(new_message)
 
         # メッセージを timestamp の降順で取得
         snapshots = history_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).get()
@@ -388,3 +412,230 @@ class FirestoreAdapter:
         snapshots = conversations_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(rp_data_limit).get()
         messages = [snapshot.to_dict() for snapshot in snapshots]
         return messages
+
+    def update_insurance_state(self, db, user_id: str, transfer_status: int = None, info_type: str = None, info_data: dict = None, should_delete: bool = False):
+        """保険関連の状態と情報を一括で更新する関数
+        
+        Args:
+            db: Firestoreのデータベースインスタンス
+            user_id (str): ユーザーID
+            transfer_status (int, optional): 状態を示す数値
+                0: 未選択/初期状態
+                1: 被保険者の年齢、性別、その他の参考情報
+                2: 現在の保険会社&保険商品名と値段を質問中
+                3: 乗り換え先の保険商品名と値段を質問中
+                4: 情報に誤りがないか、処理を実行するかを質問中
+                5: 提案が完了した状態
+            info_type (str, optional): 情報の種類 ('insured_info' | 'current_insurance' | 'target_insurance')
+            info_data (dict, optional): 保存するデータ
+            should_delete (bool, optional): 保険情報を削除するかどうか
+        """
+        doc_ref = db.collection('userIds').document(user_id)
+        update_data = {}
+
+        # transfer_statusの更新
+        if transfer_status is not None:
+            update_data.update({
+                'transfer_status': transfer_status,
+                'botType': 'tr'
+            })
+
+        # 保険情報の更新
+        if info_type and info_data and not should_delete:
+            update_data[f'insurance_{info_type}'] = info_data
+
+        # 保険情報の削除
+        if should_delete:
+            update_data.update({
+                'insurance_insured_info': None,
+                'insurance_current_insurance': None,
+                'insurance_target_insurance': None
+            })
+
+        # データの更新（一括で実行）
+        if update_data:
+            doc_ref.set(update_data, merge=True)
+    
+    
+    def get_insurance_info(self, db, query_vector=None, limit=5):
+        """保険情報をベクトル検索で取得する
+
+        Args:
+            db: Firestoreのデータベースインスタンス
+            query_vector (list, optional): 検索クエリのベクトル表現。Defaults to None.
+            limit (int, optional): 返す結果の最大件数。Defaults to 5.
+
+        Returns:
+            list: 保険情報のリスト。query_vectorが指定された場合は類似度順にソートされる。
+            各要素は以下のキーを含む辞書:
+            - company: 保険会社名
+            - content: 保険の詳細内容
+            - insurance_name: 保険商品名
+            - summary: 保険の概要
+            - similarity: クエリとの類似度（query_vectorが指定された場合のみ）
+        """
+        
+        # insurancesコレクションの全batch_xドキュメントを取得
+        batch_docs = db.collection('insurances').stream()
+        
+        if not batch_docs:
+            return []
+        
+        all_insurance_info = []
+        
+        # 各batch_xドキュメントから保険情報を抽出
+        for batch_doc in batch_docs:
+            batch_data = batch_doc.to_dict()
+            if 'insurance_list' not in batch_data:
+                continue
+                
+            # insurance_listの各番号キーから保険情報を取得
+            insurance_list = batch_data['insurance_list']
+            if isinstance(insurance_list, dict):
+                # 番号キーの値（保険情報）をリストに追加
+                all_insurance_info.extend(insurance_list.values())
+        
+        # ベクトル検索が指定された場合
+        if query_vector is not None:
+            # クエリベクトルをNumPy配列に変換
+            query_array = np.array(query_vector)
+            
+            # 各保険情報に対して類似度を計算
+            results = []
+            for info in all_insurance_info:
+                if 'embedding' not in info:
+                    continue
+                    
+                # 埋め込みベクトルをNumPy配列に変換
+                embedding_array = np.array(info['embedding'])
+                
+                # ユークリッド距離を計算（L2ノルム）
+                distance = np.linalg.norm(query_array - embedding_array)
+                
+                # 距離を0-1の類似度に変換（1が最も類似）
+                similarity = 1 / (1 + distance)
+                
+                # 情報をコピーして類似度を追加
+                info_with_similarity = info.copy()
+                info_with_similarity['similarity'] = similarity
+                results.append((similarity, info_with_similarity))
+            
+            # 類似度でソートして上位limit件を返す（類似度の降順）
+            results.sort(key=lambda x: x[0], reverse=True)
+            return [info for _, info in results[:limit]]
+        
+        # ベクトル検索が指定されていない場合は、単純にlimit件を返す
+        return all_insurance_info[:limit]
+
+    def update_talk_state(self, db, user_id: str, talk_status: int = None, info_type: str = None, info_data: dict = None, related_articles: list = None, should_delete: bool = False):
+        """トークモードの状態と情報を一括で更新する関数
+        
+        Args:
+            db: Firestoreのデータベースインスタンス
+            user_id (str): ユーザーID
+            talk_status (int, optional): 状態を示す数値
+                0: 未選択/初期状態
+                1: 個人情報を質問中
+                2: 通常会話中
+            info_type (str, optional): 情報の種類 ('personal_info' | その他必要な情報タイプ)
+            info_data (dict, optional): 保存するデータ
+            related_articles (list, optional): 関連記事のリスト
+            should_delete (bool, optional): トーク情報を削除するかどうか
+        """
+        doc_ref = db.collection('userIds').document(user_id)
+        update_data = {}
+
+        # talk_statusの更新
+        if talk_status is not None:
+            update_data.update({
+                'talk_status': talk_status,
+                'botType': 'ta'
+            })
+
+        # トーク情報の更新
+        if info_type and info_data and not should_delete:
+            update_data[f'talk_{info_type}'] = info_data
+
+        # 関連記事情報の更新
+        if related_articles is not None:
+            update_data['talk_related_articles'] = related_articles
+
+        # トーク情報の削除
+        if should_delete:
+            update_data.update({
+                'talk_status': 0,
+                'talk_personal_info': None,
+                'talk_related_articles': None
+            })
+
+        # データの更新（一括で実行）
+        if update_data:
+            doc_ref.set(update_data, merge=True)
+
+    def get_article_info(self, db, query_vector=None, limit=5):
+        """記事情報をベクトル検索で取得する
+
+        Args:
+            db: Firestoreのデータベースインスタンス
+            query_vector (list, optional): 検索クエリのベクトル表現。Defaults to None.
+            limit (int, optional): 返す結果の最大件数。Defaults to 5.
+
+        Returns:
+            list: 記事情報のリスト。query_vectorが指定された場合は類似度順にソートされる。
+            各要素は以下のキーを含む辞書:
+            - title: 記事タイトル
+            - content: 記事の内容
+            - url: 記事のURL（存在する場合）
+            - similarity: クエリとの類似度（query_vectorが指定された場合のみ）
+        """
+        
+        # articlesコレクションのessential_infoドキュメントを取得
+        doc_ref = db.collection('articles').document('essential_info')
+        doc = doc_ref.get()
+        
+        if not doc.exists:
+            return []
+        
+        doc_data = doc.to_dict()
+        if 'info_list' not in doc_data:
+            return []
+            
+        info_list = doc_data['info_list']
+        all_article_info = []
+        
+        # info_listの各番号キーから記事情報を取得
+        if isinstance(info_list, dict):
+            # 番号キーの値（記事情報）をリストに追加
+            all_article_info.extend(info_list.values())
+        
+        # ベクトル検索が指定された場合
+        if query_vector is not None:
+            # クエリベクトルをNumPy配列に変換
+            query_array = np.array(query_vector)
+            
+            # 各記事情報に対して類似度を計算
+            results = []
+            for info in all_article_info:
+                if 'embedding' not in info:
+                    continue
+                    
+                # 埋め込みベクトルをNumPy配列に変換
+                embedding_array = np.array(info['embedding'])
+                
+                # ユークリッド距離を計算（L2ノルム）
+                distance = np.linalg.norm(query_array - embedding_array)
+                
+                # 距離を0-1の類似度に変換（1が最も類似）
+                similarity = 1 / (1 + distance)
+                
+                # 情報をコピーして類似度を追加
+                info_with_similarity = info.copy()
+                info_with_similarity['similarity'] = similarity
+                results.append((similarity, info_with_similarity))
+            
+            # 類似度でソートして上位limit件を返す（類似度の降順）
+            results.sort(key=lambda x: x[0], reverse=True)
+            return [info for _, info in results[:limit]]
+        
+        # ベクトル検索が指定されていない場合は、単純にlimit件を返す
+        return all_article_info[:limit]

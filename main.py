@@ -2,6 +2,7 @@
 import os
 import re
 import datetime
+import requests
 import functions_framework
 import firebase_admin
 from firebase_admin import firestore
@@ -16,9 +17,17 @@ from src.rag.index_controller import IndexController
 from src.youtube.youtube_data_api_adapter import YoutubeDataApiAdapter
 from src.stripe.stripe_adapter import StripeAdapter
 import random
+import logging
+
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 load_dotenv()
 LINE_ACCESS_TOKEN = os.getenv('LINE_ACCESS_TOKEN')
+INSURANCE_DB_URL = os.getenv('INSURANCE_DB_URL')
 gp = GetPrompt()
 la = LineAdapter()
 fa = FirestoreAdapter()
@@ -84,8 +93,11 @@ RP_FAMILY_STRUCTURES = [
 ]
 
 RP_LOCATIONS = [
-    "都内", "関東", "千葉県", "埼玉県", "大阪府", 
-    "京都府", "愛知県", "福岡県", "北海道"
+    "都内", "大都市圏", "地方"
+]
+
+RP_RESIDENCES = [
+    "一戸建て", "マンション", "賃貸アパート"
 ]
 
 RP_INSURANCE_STATUS = [
@@ -97,18 +109,30 @@ RP_INSURANCE_STATUS = [
 ]
 
 RP_INSURANCE_DETAILS = [
-    "月額保険料：5,000円", 
-    "月額保険料：10,000円",
-    "月額保険料：15,000円",
-    "月額保険料：20,000円",
-    "月額保険料：30,000円"
+    "月額 5,000円", 
+    "月額 10,000円",
+    "月額 15,000円",
+    "月額 20,000円",
+    "月額 30,000円"
 ]
 
 RP_PERSONALITIES = [
-    "慎重派・保守的", "積極的・チャレンジ精神旺盛",
-    "計画的・堅実", "直感的・決断が早い",
-    "分析的・理論的", "感情的・共感力が高い",
-    "リスク回避型", "バランス重視型"
+    "慎重派で保守的", "気難しく否定的",
+    "受容的で共感力が高い", "論理的で理屈屋"
+]
+
+# 保険会社のリストを追加
+RP_LIFE_INSURANCE_COMPANIES = [
+    "日本生命", "第一生命", "明治安田", "住友",
+    "T&D", "ソニー", "朝日"
+]
+RP_MEDICAL_INSURANCE_COMPANIES = [
+    "楽天", "アフラック", "チューリッヒ", "アクサ",
+    "メットライフ", "東京海上日動", "三井住友海上", "明治安田"
+]
+RP_CANCER_INSURANCE_COMPANIES = [
+    "アクサ", "第一生命", "明治安田", "住友", "メットライフ",
+    "アフラック", "チューリッヒ", "日本生命", "三井住友海上", "朝日"
 ]
 
 def generate_rp_setting():
@@ -119,10 +143,20 @@ def generate_rp_setting():
         "世帯年収": random.choice(RP_ANNUAL_INCOMES),
         "家族構成": random.choice(RP_FAMILY_STRUCTURES),
         "居住地": random.choice(RP_LOCATIONS),
+        "住居形態": random.choice(RP_RESIDENCES),
         "保険加入状況": random.choice(RP_INSURANCE_STATUS),
         "現在の保険料": random.choice(RP_INSURANCE_DETAILS),
         "性格": random.choice(RP_PERSONALITIES)
     }
+    
+    # 保険加入状況に応じて保険会社の情報を追加
+    if setting["保険加入状況"] != "保険未加入":
+        if "生命保険" in setting["保険加入状況"]:
+            setting["生命保険会社"] = random.choice(RP_LIFE_INSURANCE_COMPANIES)
+        if "医療保険" in setting["保険加入状況"]:
+            setting["医療保険会社"] = random.choice(RP_MEDICAL_INSURANCE_COMPANIES)
+        if "がん保険" in setting["保険加入状況"]:
+            setting["がん保険会社"] = random.choice(RP_CANCER_INSURANCE_COMPANIES)
     
     # 設定を文字列にフォーマット
     setting_text = ""
@@ -197,7 +231,7 @@ def res_cancel(sub,userId):
     plan_period = datetime.datetime.fromtimestamp(sub['current_period_end'], datetime.timezone.utc)
     # firestoreから現在のステータスを取得
     # cu_sta_data = fa.get_sub_status(db, userId)
-    user_data = fa.get_user_data(db,userId,data_limit)
+    user_data = fa.get_user_data(db,userId,data_limit,rp_data_limit)
     cu_sta = user_data['current_sub_status']
     # Firestoreの状態を更新（next_sub_status と plan_change_date を設定）
     fa.set_sub_status(db,userId,current_status=cu_sta,next_status='free',plan_change_date=plan_period)
@@ -256,7 +290,7 @@ def line_event_process(request_json):
             replyToken = None
             print(e)
 
-        user_data = fa.get_user_data(db,userId,data_limit)
+        user_data = fa.get_user_data(db,userId,data_limit,rp_data_limit)
         if eventType == "message":
             result = event_message(event,replyToken,userId,user_data)
         elif eventType == "follow":
@@ -273,26 +307,477 @@ def event_message(event,replyToken,userId,user_data):
     res = []
     mesType = event['message']['type']
     if mesType == "text":
-        res = message_process(event,userId,user_data)
+        res = message_process(event,userId,user_data,replyToken)
     else:
         res = ["テキストメッセージ以外には対応していません"]
-    la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+    try:
+        # 空のリストは送信しない（すでに別の方法で送信済み）
+        if res and len(res) > 0:
+            logging.info(f"Replying to message event with {len(res)} messages")
+            la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+        else:
+            logging.info("Skipping reply as response list is empty")
+    except Exception as e:
+        logging.error(f"Error in event_message: {str(e)}")
+        # 返信に失敗した場合はプッシュメッセージを試みる
+        if res and len(res) > 0:
+            la.push_message(LINE_ACCESS_TOKEN, userId, res)
     return True
     # except Exception as e:
     #     print(e)
     #     return False
     
-def message_process(event,userId,user_data):
+def message_process(event,userId,user_data,replyToken):
     mesText = event['message']['text']
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
+    transfer_status = user_data.get('transfer_status', 0)
+    talk_status = user_data.get('talk_status', 0)
+
     if pending_action:
         return sub_act(pending_action,mesText,userId,user_data)
     if isRetryRP:
-        return retry_rp(userId,mesText,user_data)
+        # 修正箇所１：現在のbotTypeがRPの場合、knに変更する
+        return mode_change(userId,'kn',user_data)
+        # return retry_rp(userId,mesText,user_data)
+    
+    # transfer_statusに基づく処理
+    if transfer_status == 1:
+        return process_insured_info(userId, mesText)
+    elif transfer_status == 2:
+        return process_current_insurance(userId, mesText)
+    elif transfer_status == 3:
+        return process_target_insurance(userId, mesText)
+    elif transfer_status == 4:
+        return process_execute_proposal(userId, user_data, mesText, replyToken)
+    elif transfer_status == 5:
+        return ["提案が終了しました。\n\n新たな条件で提案を作成する場合は再度、メニュー「乗換の提案」ボタンをタップしてください。"]
+    # talk_statusに基づく処理を追加
+    elif talk_status == 1:
+        return process_talk_info(userId, mesText)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
+
+def process_insured_info(userId, mesText):
+    """被保険者情報を処理する関数"""
+    try:
+        # Firestoreに保存
+        fa.update_insurance_state(db, userId, 
+            transfer_status=2,
+            info_type='insured_info',
+            info_data={'info': mesText}
+        )
+        
+        return ["ありがとうございます。\n次に、現在ご加入されている保険会社名と保険商品名、月々の保険料を教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+    except Exception as e:
+        return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください。"]
+
+def extract_insurance_info(mesText):
+    """保険会社名、保険商品名、保険料を抽出する共通関数"""
+    try:
+        # 保険料を抽出（数字と単位「円」を含む部分を探す）
+        premium_match = re.search(r'(\d{1,3}(,\d{3})*|\d+)\s*円', mesText)
+        premium = premium_match.group(1) if premium_match else None
+
+        if not premium:
+            return None, None, None
+
+        # AIウェブサーチで保険会社と商品名を調査
+        search_prompt = gp.get_insurance_search_prompt(mesText)
+        search_result = oa.openai_chat("gpt-4o-search-preview", search_prompt)
+
+        # 検索結果から情報を抽出
+        company_match = re.search(r'<company_name>\s*(.*?)\s*</company_name>', search_result, re.DOTALL)
+        product_match = re.search(r'<product_name>\s*(.*?)\s*</product_name>', search_result, re.DOTALL)
+
+        company_name = company_match.group(1) if company_match else None
+        product_name = product_match.group(1) if product_match else None
+
+        if company_name == 'None' or product_name == 'None':
+            return None, None, None
+
+        return company_name, product_name, premium
+    except Exception as e:
+        print(f"Error in extract_insurance_info: {str(e)}")
+        return None, None, None
+
+def process_current_insurance(userId, mesText):
+    """現在の保険情報を処理する関数"""
+    try:
+        # 共通関数を使用して保険情報を抽出
+        company_name, product_name, premium = extract_insurance_info(mesText)
+
+        if not company_name or not product_name or not premium:
+            return ["申し訳ありません。入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+
+        # Firestoreに保存
+        fa.update_insurance_state(db, userId,
+            transfer_status=3,
+            info_type='current_insurance',
+            info_data={
+                'company_name': company_name,
+                'product_name': product_name,
+                'premium': premium
+            }
+        )
+        
+        # リプライメッセージを作成
+        messages = [
+            f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}\n・保険料：{premium}円",
+            "次に、乗り換え提案したい保険会社名と保険商品名、希望する月々の保険料を教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"
+        ]
+        
+        return messages
+
+    except Exception as e:
+        print(f"Error in process_current_insurance: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。\n再度、保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+
+def process_target_insurance(userId, mesText):
+    """乗り換え先の保険情報を処理する関数"""
+    try:
+        # 共通関数を使用して保険情報を抽出
+        company_name, product_name, premium = extract_insurance_info(mesText)
+
+        if not company_name or not product_name or not premium:
+            return ["入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+
+        # Firestoreに保存
+        fa.update_insurance_state(db, userId,
+            transfer_status=4,
+            info_type='target_insurance',
+            info_data={
+                'company_name': company_name,
+                'product_name': product_name,
+                'premium': premium
+            }
+        )
+        
+        # リプライメッセージを作成
+        messages = [
+            f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}\n・保険料：{premium}円",
+            "ここまでの情報に誤りがなければ、乗り換え提案を作成いたしますが、よろしいでしょうか？\n\n「はい」または「いいえ」でお答えください。"
+        ]
+        
+        return messages
+
+    except Exception as e:
+        print(f"Error in process_target_insurance: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+
+def process_execute_proposal(userId,user_data,mesText,replyToken):
+    """乗り換え提案を実行する関数"""
+    if mesText == 'はい':
+        return create_proposal(userId,user_data,replyToken)
+    else:
+        return cancel_proposal(userId)
+
+def process_talk_info(userId, mesText):
+    """トークモードでの個人情報を処理する関数"""
+    try:
+        # テキストをベクトル化
+        vector = oa.embedding([mesText])[0]
+        
+        # ベクトル検索で関連記事を取得
+        search_results = fa.get_article_info(db, vector, 5)  # 上位5件を取得
+        
+        isNotRelated = True
+        if search_results:
+            isNotRelated = False
+        
+        # 検索結果からcontentのリストを作成
+        contents = [result['content'] for result in search_results]
+        
+        # AIによる関連性の評価
+        verify_prompt = gp.get_talk_content_verification_prompt(mesText, contents)
+        verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+        
+        # 関連性のある記事番号を抽出
+        relevant_numbers = []
+        if not verification_response:
+            return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+        match = re.search(r'<relevant_numbers>\s*(.*?)\s*</relevant_numbers>', verification_response, re.DOTALL)
+        if not match:
+            return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+        numbers_str = match.group(1).strip()
+        if numbers_str.lower() == 'none':
+            isNotRelated = True
+        else:
+            # カンマ区切りの番号をリストに変換
+            relevant_numbers = [int(num.strip()) for num in numbers_str.split(',')]
+        
+        # 返信メッセージを作成
+        messages = ["ありがとうございます。\nご提供いただいた情報を保存しました"]
+        messages.append("また、お客様情報に関連して、保険提案につながる可能性のある話題を調査しました")
+        
+        # 関連記事情報を格納するリスト
+        related_articles = []
+        
+        if not relevant_numbers:
+            isNotRelated = True
+        
+        if isNotRelated:
+            # AIによる話題生成（ネット検索モデルを使用）
+            generate_prompt = gp.get_talk_topic_generation_prompt(mesText)
+            generated_response = oa.openai_chat("gpt-4o-search-preview", generate_prompt)
+            
+            if not generated_response:
+                return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+            
+            # 生成された話題を抽出
+            topics = []
+            for topic_num in ['first', 'second', 'third']:
+                topic_match = re.search(f'<{topic_num}_topic>(.*?)</{topic_num}_topic>', generated_response, re.DOTALL)
+                if topic_match:
+                    topic = topic_match.group(1).strip()
+                    if topic:
+                        topics.append(topic)
+            
+            if not topics:
+                return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+            
+            # 生成された話題をメッセージに追加
+            for i, topic in enumerate(topics, 1):
+                messages.append(f"{i}. {topic}")
+                related_articles.append({'content': topic})
+        else:
+            # 関連性のある記事を番号付きで追加
+            for i, num in enumerate(relevant_numbers, 1):
+                if 1 <= num <= len(contents):
+                    content = contents[num-1]
+                    messages.append(f"{i}. {content}")
+                    related_articles.append({'content': content})
+        
+        messages.append("\nこの内容を基に、保険提案トークを作成しますか？\nはい/いいえ で回答してください。")
+        
+        # Firestoreに個人情報と関連記事を保存
+        fa.update_talk_state(db, userId, 
+            talk_status=2,  # 次の状態へ
+            info_type='personal_info',
+            info_data={'info': mesText},
+            related_articles=related_articles
+        )
+        
+        return messages
+        
+    except Exception as e:
+        logging.error(f"Error in process_talk_info: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください。"]
+
+def search_insurance_info(insurance_data):
+    """
+    保険情報を検索し、最も適切な結果を返す関数
+    
+    Args:
+        insurance_data (dict): 保険情報を含む辞書 (company_name, product_nameを含む)
+        db: Firestoreデータベースインスタンス
+        oa: OpenAIアダプターインスタンス
+        
+    Returns:
+        dict or None: 検索された保険情報。見つからない場合はNone
+    """
+    if not insurance_data:
+        return None
+        
+    search_text = f"{insurance_data['company_name']}の{insurance_data['product_name']}"
+    vector = oa.embedding([search_text])[0]
+    search_results = fa.get_insurance_info(db, vector, 5)
+    
+    # 検索結果のテキスト化（番号付き）
+    search_text_numbered = "\n".join([
+        f"{i}. {result['company']}の{result['insurance_name']}" 
+        for i, result in enumerate(search_results, 1)
+    ])
+    
+    # AI による検証
+    verify_prompt = gp.get_insurance_verification_prompt(search_text_numbered, search_text)
+    verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+    
+    if verification_response:
+        match = re.search(r'<result_number>\s*(\d+|None)\s*</result_number>', verification_response)
+        if match:
+            result_number = match.group(1)
+            if result_number != "None":
+                # 選択された保険情報を取得
+                selected_insurance = search_results[int(result_number) - 1]
+                
+                # contentの内容を評価
+                content_verify_prompt = gp.get_insurance_content_verification_prompt(selected_insurance['content'])
+                content_verification = oa.openai_chat("gpt-4o", content_verify_prompt)
+                
+                # 内容が十分な場合は選択された保険情報を返す
+                if content_verification and 'true' in content_verification.lower():
+                    return selected_insurance
+                # 内容が不十分な場合は新しい情報を取得
+                else:
+                    return get_insurance_details(insurance_data['company_name'], insurance_data['product_name'])
+            else:
+                return get_insurance_details(insurance_data['company_name'], insurance_data['product_name'])
+    
+    return None
+
+def create_proposal(userId, user_data, replyToken):
+    """提案を作成する関数"""
+    try:
+        # 初期メッセージを送信
+        res = ["以上のデータをもとに、乗り換え提案を作成します","まず、現在の保険商品の情報を収集しています","これには30秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
+        # テキストをプッシュ
+        la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, res)
+
+        # 現在の保険情報の処理
+        current_insurance = user_data.get('insurance_current_insurance')
+        current_result = search_insurance_info(current_insurance)
+        
+        if current_result:
+            content = current_result['content']
+            text = ["現在の保険商品についての情報を収集しました",f"【現在の保険商品の情報】\n{content}","次に、乗り換え提案する保険商品の情報を収集します。\n\nこれには30秒程度掛かる場合があります。\n\nしばらくお待ちください..."]
+            la.push_message(LINE_ACCESS_TOKEN, userId, text)
+
+        # 目標の保険情報の処理
+        target_insurance = user_data.get('insurance_target_insurance')
+        target_result = search_insurance_info(target_insurance)
+        
+        if target_result:
+            content = target_result['content']
+            text = ["乗り換え提案する保険商品についての情報を収集しました",f"【乗り換え提案する保険商品の情報】\n{content}","最後に、乗り換え提案を作成します。\n\nしばらくお待ちください..."]
+            la.push_message(LINE_ACCESS_TOKEN, userId, text)
+        
+        if current_result and target_result:
+            # 保険情報が揃っている場合、提案を作成
+            insured_info = user_data.get('insurance_insured_info', {})
+            
+            # 提案生成プロンプトの作成
+            proposal_prompt = gp.get_insurance_proposal_prompt(
+                insured_info=insured_info,
+                current_insurance=current_result,
+                target_insurance=target_result
+            )
+            
+            # 提案の生成
+            proposal_response = oa.openai_chat("gpt-4o", proposal_prompt)
+            
+            if proposal_response:
+                # 各セクションを抽出
+                sections = {
+                    '特徴解説': re.search(r'<feature_analysis>(.*?)</feature_analysis>', proposal_response, re.DOTALL),
+                    'メリット・デメリット分析': re.search(r'<merit_demerits>(.*?)</merit_demerits>', proposal_response, re.DOTALL),
+                    '評価': re.search(r'<evaluation_score>(.*?)</evaluation_score>', proposal_response, re.DOTALL),
+                    '提案方法': re.search(r'<proposal_method>(.*?)</proposal_method>', proposal_response, re.DOTALL),
+                    '総評と反論': re.search(r'<overall_evaluation>(.*?)</overall_evaluation>', proposal_response, re.DOTALL)
+                }
+                
+                # 各セクションのテキストを抽出し、整形
+                proposal_sections = {}
+                for title, match in sections.items():
+                    if match:
+                        proposal_sections[title] = match.group(1).strip()
+                    else:
+                        proposal_sections[title] = "情報なし"
+                
+                # 提案内容を整形
+                formatted_proposal = [
+                    "乗り換え提案を作成しました。",
+                    "【1. 特徴解説】\n" + proposal_sections['特徴解説'],
+                    "【2. メリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析'],
+                    "【3. 評価】\n" + proposal_sections['評価'],
+                    "【4. 提案方法】\n" + proposal_sections['提案方法'],
+                    "【5. 総評と反論】\n" + proposal_sections['総評と反論'],
+                    "※AIによる提案内容は参考情報です。実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。"
+                ]
+                
+                # 状態をリセット
+                fa.update_insurance_state(db, userId, transfer_status=5, should_delete=True)
+                
+                # 提案内容を直接送信（replyTokenは有効期限が短いためpush_messageを使用）
+                logging.info(f"Sending insurance proposal to user: {userId}")
+                la.push_message(LINE_ACCESS_TOKEN, userId, formatted_proposal)
+                
+                # 空のリストを返して、event_messageの外側で二重送信しないようにする
+                return []
+                
+        # 提案作成に失敗した場合はエラーメッセージを表示
+        error_message = ["申し訳ありません。提案の作成に失敗しました。\n再度お試しください。"]
+        logging.error(f"Failed to create proposal for user: {userId}")
+        la.push_message(LINE_ACCESS_TOKEN, userId, error_message)
+        return []
+
+    except Exception as e:
+        logging.error(f"Error in create_proposal: {str(e)}")
+        error_message = ["申し訳ありません。エラーが発生しました。\n再度お試しください。"]
+        la.push_message(LINE_ACCESS_TOKEN, userId, error_message)
+        return []
+
+def get_insurance_details(company_name, product_name):
+    """
+    保険商品の詳細情報をAIウェブサーチで取得し、データベースに保存する関数
+    
+    Args:
+        company_name (str): 保険会社名
+        product_name (str): 商品名
+        
+    Returns:
+        dict: 保険商品の詳細情報を含む辞書。以下のキーを含む:
+            - company: 保険会社名
+            - insurance_name: 保険商品名
+            - content: 商品の詳細内容
+    """
+    try:
+        # プロンプトの準備
+        search_prompt = gp.get_insurance_product_search_details_prompt()
+        prompt = f"{search_prompt}\n\n保険会社名: {company_name}\n保険商品名: {product_name}"
+
+        # AIによる詳細情報の収集
+        response = oa.openai_chat(
+            openai_model="gpt-4o-search-preview",
+            prompt=prompt
+        )
+        
+        if not response:
+            raise ValueError("Failed to get response from AI search")
+
+        # 商品詳細情報の抽出
+        content_start = response.find("<product_details>")
+        content_end = response.find("</product_details>")
+
+        if content_start < 0 or content_end < 0:
+            raise ValueError("Failed to extract product details from response")
+
+        content = response[content_start + len("<product_details>"):content_end].strip()
+
+        if not content:
+            raise ValueError("Empty content extracted from response")
+
+        # 保険商品情報を構造化
+        insurance_info = {
+            "company": company_name,
+            "insurance_name": product_name,
+            "content": content,
+        }
+
+        # 保険情報DBエンドポイントへ送信
+        try:
+            response = requests.post(INSURANCE_DB_URL + "/insurance", json=insurance_info)
+            return insurance_info
+        
+        except Exception as e:
+            logging.error(f"Error in send_insurance_info: {str(e)}")
+            return None
+    
+    except Exception as e:
+        logging.error(f"Error in get_insurance_details: {str(e)}")
+        return None
+
+def cancel_proposal(userId):
+    """保険商品の乗り換え提案をキャンセルし、初期状態に戻す関数"""
+    # transfer_statusを0に設定し、保険情報を削除
+    fa.update_insurance_state(db, userId, transfer_status=0, should_delete=True)
+    
+    return [
+        "乗り換え提案の情報をリセットしました。",
+        "再度、想定される被保険者の年齢と性別を教えてください。また、その他の補足情報があれば教えてください",
+        "例：\n・年齢：30歳\n・性別：男性\n・結婚しており子供がいる"
+    ]
 
 def sub_act(pending_action,mesText,userId,user_data):
     if mesText == 'はい':
@@ -301,15 +786,37 @@ def sub_act(pending_action,mesText,userId,user_data):
         return cancel_update_sub(userId)
 
 def retry_rp(userId,mesText,user_data):
+    situation = rp_situation(user_data)    
     if mesText == 'はい':
         fa.reset_rp_history(db, userId, isResetHistory=True, isRetryRP=False)
-        return ["会話履歴をリセットし、同じ設定で再度営業ロープレを開始します。", "====ここから開始====\n\nテキストを送信し、会話を開始してください..."]
+        return ["会話履歴をリセットし、同じ設定で再度営業ロープレを開始します", f"====シチュエーション====\n{situation}※設定は他にも存在します。会話の中で探してください=====================\n\nテキストを送信し、会話を開始してください..."]
     else:
         return close_rp(userId)
+
+def rp_situation(user_data, rp_setting=None):
+    """RPの設定から場面の説明を生成する"""
+    if rp_setting is None:
+        rp_setting_text = user_data.get('rp_setting')
+    else:
+        rp_setting_text = rp_setting
     
+    # 文字列から必要な情報を抽出
+    setting_dict = {}
+    for line in rp_setting_text.split('\n'):
+        if '：' in line:
+            key, value = line.split('：')
+            key = key.replace('■ ', '').strip()
+            value = value.strip()
+            setting_dict[key] = value
+
+    situation = "■ 場面：訪問営業\n"
+    situation += f"■ 場所：{setting_dict.get('居住地', '不明')} / {setting_dict.get('住居形態', '不明')}\n"
+    situation += f"■ 顧客：{setting_dict.get('性別', '不明')} / {setting_dict.get('年齢', '不明')}くらい\n"
+    return situation
+
 def close_rp(userId):
     fa.reset_rp_history(db, userId, isResetHistory=True, isAlreadyRP=False, isRetryRP=False)
-    return ["営業ロープレを終了します。お疲れさまでした", "繰り返し練習し、営業力を高めましょう！"]
+    return ["営業ロープレを終了します。お疲れさまでした！", "繰り返し練習し、営業力を高めましょう！"]
 
 def exec_update_sub(pending_action,userId,user_data):
     if pending_action['desired_plan'] == 'try':
@@ -348,7 +855,7 @@ def cancel_update_sub(userId):
     return ['操作をキャンセルしました']
 
 def event_follow(event,replyToken,userId):
-    # user_data = fa.get_user_data(db,userId,data_limit)
+    # user_data = fa.get_user_data(db,userId,data_limit,rp_data_limit)
     return True
     # except Exception as e:
     #     print(e)
@@ -360,12 +867,19 @@ def event_unfollow(event,replyToken,userId):
 def event_postback(event,replyToken,userId,user_data):
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
-    if pending_action:
-        return cancel_update_sub(userId)
-    if isRetryRP:
-        return close_rp(userId)
+    transfer_status = user_data.get('transfer_status', 0)
+    if 1 <= transfer_status <= 4:
+        fa.update_insurance_state(db, userId, transfer_status=0, should_delete=True)
+    elif pending_action:
+        text = cancel_update_sub(userId)
+    elif isRetryRP:
+        text = close_rp(userId)
+        la.reply_to_line(LINE_ACCESS_TOKEN, replyToken, text)
+        return True
     postType = event['postback']['data']
-    if postType in ['kn','qa','yo','gs','rps','rpr']:
+    # 修正箇所２：yo、qa、rps、rprの場合、変更を受け付けない
+    # if postType in ['kn','qa','yo','gs','rps','rpr']:
+    if postType in ['kn','gs','ta','tr']:
         res = mode_change(userId,postType,user_data)
     elif postType in ['980','1980','3980','free','try']:
         rs = RegStripe(event,postType,replyToken,userId,user_data)
@@ -385,16 +899,20 @@ def mode_change(userId,postType,user_data):
     current_plan = user_data['current_sub_status']
     if postType == "kn":
         judg,text = mode_kn(current_plan)
-    elif postType == "qa":
-        judg,text = mode_qa(current_plan)
-    elif postType == "yo":
-        judg,text = mode_yo(current_plan)
+    # elif postType == "qa":
+    #     judg,text = mode_qa(current_plan)
+    # elif postType == "yo":
+    #     judg,text = mode_yo(current_plan)
+    elif postType == "ta":
+        judg,text = mode_ta(userId,user_data,current_plan)
+    elif postType == "tr":
+        judg,text = mode_tr(userId,current_plan)
     elif postType == "gs":
         judg,text = mode_gs(current_plan)
     elif postType == "rps":
-        judg,text = mode_rps(current_plan,user_data)
+        judg,text = mode_rps(userId,current_plan,user_data)
     elif postType == "rpr":
-        judg,text = mode_rpr(current_plan,user_data)
+        judg,text = mode_rpr(userId,current_plan,user_data)
     if judg:
         fa.set_botType(db, userId, postType)
     return text
@@ -405,50 +923,84 @@ def mode_kn(current_plan):
     else:
         return True, ["【モード変更】\nゼロコンAIが保険の知識・提案方法に関して一問一答でお答えします"]
 
-def mode_qa(current_plan):
-    if current_plan in ['free','980']:
-        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
-    else:
-        return True, ["【モード変更】\nゼロコンAIが保険に関するQAデータベースに基づいてお答えします"]
+# def mode_qa(current_plan):
+#     if current_plan in ['free','980']:
+#         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+#     else:
+#         return True, ["【モード変更】\nゼロコンAIが保険に関するQAデータベースに基づいてお答えします"]
     
-def mode_yo(current_plan):
-    if current_plan in ['free','980']:
-        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
-    else:
-        return True, ["【モード変更】\nゼロコンAIが知りたい情報についてYoutube動画をお調べします"]
-    
+# def mode_yo(current_plan):
+#     if current_plan in ['free','980']:
+#         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+#     else:
+#         return True, ["【モード変更】\nゼロコンAIが知りたい情報についてYoutube動画をお調べします"]
+
 def mode_gs(current_plan):
     if current_plan in ['free','980']:
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
         return True, ["【モード変更】\nゼロコンAIが会話形式で様々な質問、ご相談に対応します"]
 
-def mode_rps(current_plan,user_data):
+def mode_ta(userId,current_plan):
     if current_plan in ['free','980']:
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
-        return True, rps_text(user_data)
+        return True, ta_text(userId)
     
-def mode_rpr(current_plan,user_data):
+def mode_tr(userId,current_plan):
     if current_plan in ['free','980']:
         return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
     else:
-        return True, rpr_text(user_data)
+        return True, tr_text(userId)
+
+def mode_rps(userId,current_plan,user_data):
+    if current_plan in ['free','980']:
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+    else:
+        return True, rps_text(userId,user_data)
     
-def rps_text(user_data):
+def mode_rpr(userId,current_plan,user_data):
+    if current_plan in ['free','980']:
+        return False, ["本機能は中級以上のプランにご契約いただくことでご利用いただけます"]
+    else:
+        return True, rpr_text(userId,user_data)
+
+def ta_text(userId):
+    """
+    トークモードの状態を設定し、個人情報を質問するリプライを返す
+    """
+    # トークモードの状態を1（個人情報を質問中）に設定
+    fa.update_talk_state(db, userId, talk_status=1)
+    
+    return ["【モード変更】\nゼロコンAIが保険提案トークを考えます。",
+            "まずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+            "例：\n年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都"]
+
+def tr_text(userId):
+    """
+    保険商品の乗り換え提案機能の状態を設定し、
+    被保険者の現在加入している保険商品名とその保険会社名を質問するリプライを返す
+    """
+    # 乗り換え提案の状態を1（被保険者の年齢と性別を質問中）に設定
+    fa.update_insurance_state(db, userId, transfer_status=1)
+    
+    return ["【モード変更】\nゼロコンAIが保険商品の乗り換えを提案します","まずは、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+            "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者"]
+
+def rps_text(userId,user_data):
     """RPの設定を生成し、テキストを返す"""
     # RP設定を生成
     rp_setting = generate_rp_setting()
-    
+    situation = rp_situation(user_data, rp_setting)
     if user_data['isAlreadyRP']:
         # 会話履歴とRP設定更新
-        fa.reset_rp_history(db, user_data['userId'], isResetHistory=True, rp_setting=rp_setting)
-        return ["これまでの営業ロープレの会話履歴と設定をリセットしました。\n\n新たに営業ロープレを開始します","====ここから開始====\n\nテキストを送信し、会話を開始してください..."]
+        fa.reset_rp_history(db, userId, isResetHistory=True, rp_setting=rp_setting)
+        return ["これまでの営業ロープレの会話履歴と設定をリセットしました。\n\n新たに営業ロープレを開始します",f"====シチュエーション====\n{situation}※設定は他にも存在します。会話の中で探してください=====================\n\nテキストを送信し、会話を開始してください..."]
     else:
-        fa.set_initial_rp(db, user_data['userId'], isAlreadyRP=True, rp_setting=rp_setting)
-        return ["【モード変更】\nゼロコンAIを相手に営業トレーニングを開始します", "ゼロコンAIが演じる顧客に対し、保険営業を行ってください！※顧客の設定はランダムに決められます", "メニューの「終了＆批評」ボタンをクリックすると営業ロープレを終了し、営業提案の内容を評価します",  "では、営業ロープレを開始します","====ここから開始====\n\nテキストを送信し、会話を開始してください..."]
+        fa.set_initial_rp(db, userId, rp_setting)
+        return ["【モード変更】\nゼロコンAIを相手に営業トレーニングを開始します", "ゼロコンAIが演じる顧客に対し、保険営業を行ってください！\n※顧客の設定はランダムに決められます", "メニューの「終了＆批評」ボタンをクリックすると営業ロープレを終了し、営業提案の内容を評価します",  "では、営業ロープレを開始します",f"====シチュエーション====\n{situation}※設定は他にも存在します。会話の中で探してください=====================\n\nテキストを送信し、会話を開始してください..."]
 
-def rpr_text(user_data):
+def rpr_text(userId,user_data):
     """
     営業ロープレの会話履歴を取得し、それを基にAIにて批評を行い、テキストを返す
     """
@@ -462,10 +1014,11 @@ def rpr_text(user_data):
     if res == None:
         text = ["営業ロープレを終了し、ゼロコンAIによる提案内容の評価を行います","申し訳ございません。エラーにより、評価結果が取得できませんでした"]
     else:
-        text = ["営業ロープレを終了し、ゼロコンAIによる提案内容の評価を行います", "まず、今回の顧客の設定は以下の通りでした\n\n【顧客の設定】\n" + rp_setting, "次にゼロコンAIによる提案内容の評価は以下の通りでした\n\n【提案内容の評価】\n" + res]
-    restart_text = ["もう一度同じ設定で営業ロープレを開始しますか？", "「はい」と返信すると会話をリセットし、同じ設定で再度営業ロープレを開始します(モード切替や「はい」以外の返信で終了します)"]
-    text.append(restart_text)
-    fa.reset_rp_history(db, user_data['userId'], isResetHistory=True, isRetryRP=True)
+        text = ["営業ロープレを終了し、ゼロコンAIによる提案内容の評価を行います", "まず、今回の顧客の設定は以下の通りでした。\n\n【顧客の設定】\n" + rp_setting, "次にゼロコンAIによる提案内容の評価は以下の通りでした\n\n======提案内容の評価======\n" + res +"\n====================="]
+    restart_text = ["もう一度同じ設定で営業ロープレを開始しますか？", "※「はい」と返信すると会話をリセットし、同じ設定で再度営業ロープレを開始します\n(モード切替や「はい」以外の返信で終了します)"]
+    
+    text.extend(restart_text)
+    fa.reset_rp_history(db, userId, isResetHistory=True, isRetryRP=True)
     return text
 
 # def norm_rpr_text(text):
@@ -543,7 +1096,7 @@ class RegStripe:
     def start_trial(self,action,desired_plan,isTrialValid):
         if isTrialValid:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください(「はい」以外の返信でキャンセルします)"]
+            return ["【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください\n(モード切替や「はい」以外の返信でキャンセルします)"]
         else:
             return ['トライアル期間が終了しています']
 
@@ -565,14 +1118,14 @@ class RegStripe:
             return ['【ご連絡】\n解約予約されているため、プランの変更はできません\n\n解約完了後に再度ご契約ください']
         else:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご契約内容の変更確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更します","※※※※※※※※※※※※※※※※※※※※※※\n\n・「はい」と返信いただくと、即時契約手続きが実行されます\n\n・本契約月から料金が発生します\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください(「はい」以外の返信でキャンセルします)"]
+            return [f"【ご契約内容の変更確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更します","※※※※※※※※※※※※※※※※※※※※※※\n\n・「はい」と返信いただくと、即時契約手続きが実行されます\n\n・本契約月から料金が発生します\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください\n(モード切替や「はい」以外の返信でキャンセルします)"]
 
     def downgrade_sub(self,action,next_plan,desired_plan):
         if next_plan == 'free':
             return ['【ご連絡】\n解約予約されているため、プランの変更はできません\n\n解約完了後に再度ご契約ください']
         else:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return [f"【ご契約内容の変更予約の確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更予約します","※※※※※※※※※※※※※※※※※※※※※※\nプラン変更予約につき以下の点にご注意ください\n\n・本契約月は現在プランの料金が適用され、翌契約月から予約プランの料金が適用されます\n\n・プラン変更の完了まで、引き続き現在プランの機能をご利用可能です\n\n・プラン変更が完了するまで、他プランへの変更はできません\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください"]
+            return [f"【ご契約内容の変更予約の確認】\nご契約のプランを「{PLAN_NAMES[desired_plan]}」に変更予約します","※※※※※※※※※※※※※※※※※※※※※※\nプラン変更予約につき以下の点にご注意ください\n\n・本契約月は現在プランの料金が適用され、翌契約月から予約プランの料金が適用されます\n\n・プラン変更の完了まで、引き続き現在プランの機能をご利用可能です\n\n・プラン変更が完了するまで、他プランへの変更はできません\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください\n(モード切替や「はい」以外の返信でキャンセルします)"]
 
 class messageText:
     def __init__(self,event,userId,userText,user_data):
@@ -595,16 +1148,22 @@ class messageText:
             return ['メニューからモードを選択してください']
         elif botType == "kn":
             return self.res_kn()
-        elif botType == "qa":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
-        elif botType == "yo":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # elif botType == "qa":
+        #     return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # elif botType == "yo":
+        #     return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # 修正箇所３：qaまたはyoの場合、専用エラーを出す
+        elif botType == "qa" or botType == "yo":
+            return ['エラー：無効なモードを指定しています。別のモードを選択してください']
         elif botType == "gs":
             return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
-        elif botType == "rps":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
-        elif botType == "rpr":
-            return ['本機能をご利用いただくには、中級以上のプランにご契約いただく必要があります']
+        # elif botType == "rps":
+        #     return ['本機能をご利用いただくには、上級プランにご契約いただく必要があります']
+        # elif botType == "rpr":
+        #     return ['本機能をご利用いただくには、上級プランにご契約いただく必要があります']
+        # 修正箇所４：rpsまたはrprの場合、専用エラーを出す
+        elif botType == "rps" or botType == "rpr":
+            return ['エラー：無効なモードを指定しています。別のモードを選択してください']
         else:
             return ['エラー：無効なモードを指定しています']
     
@@ -734,8 +1293,9 @@ class messageText:
 
     def res_gs(self):
         convs = self.get_convs_text(self.userData['conversations'])
-        print("convs:",convs)
-        res = self.norm_gs_res(oa.openai_chat("gpt-4o",gp.get_gs_prompt(convs,self.userText)))
+        prompt = gp.get_gs_prompt(convs,self.userText)
+        print("prompt:",prompt)
+        res = self.norm_gs_res(oa.openai_chat("gpt-4o",prompt))
         if res:
             # 会話履歴を更新する
             fa.update_history(db,self.userId,data_limit,user=self.userText,assistant=res)
@@ -748,11 +1308,9 @@ class messageText:
     def get_convs_text(self,convs):
         text_list = []
         for conv in convs:
-            text = f"""<content>
+            text = f"""
 <speaker>{conv['speaker']}</speaker>
-<massage>{conv['content']}</message>
-</content>
-"""
+<message>{conv['content']}</message>"""
             text_list.append(text)
         return "".join(text_list)
 
@@ -772,13 +1330,14 @@ class messageText:
     def _process_rp(self):
         rp_setting = self.userData['rp_setting']
         history_text = self.get_rphis_text(self.userData['rp_history'])
-        print("history_text:",history_text)
         # res = self.norm_rp_res(oa.openai_chat("gpt-4o",gp.get_rp_prompt(rp_setting,history_text,self.userText)))
-        res = oa.openai_chat("gpt-4o",gp.get_rp_prompt(rp_setting,history_text,self.userText))
+        prompt = gp.get_rp_prompt(rp_setting,history_text,self.userText)
+        print("prompt:",prompt)
+        res = oa.openai_chat("gpt-4o",prompt)
         if res:
             # 会話履歴を更新
             fa.update_rp_history(db,self.userId,rp_data_limit,salesperson=self.userText,customer=res)
-            return res
+            return [res]
         else:
             return ["応答の取得に失敗しました。再度、テキストを送信してください"]
     
@@ -787,8 +1346,7 @@ class messageText:
         for conv in rp_history:
             text = f"""
 <speaker>{conv['speaker']}</speaker>
-<massage>{conv['content']}</message>
-"""
+<message>{conv['content']}</message>"""
             text_list.append(text)
         return "".join(text_list)
     
