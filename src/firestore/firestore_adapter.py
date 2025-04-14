@@ -198,6 +198,8 @@ class FirestoreAdapter:
             'insurance_target_insurance': None,
             'talk_status': 0,  # トークモードの状態を管理するフィールド
             'talk_personal_info': None,  # トークモードでの個人情報を保存するフィールド
+            'talk_related_articles': None,  # トークモードでの関連記事を保存するフィールド
+            'talk_mappings': None,  # トークモードでのマッピング情報を保存するフィールド
         }
 
     def get_user_data(self, db, user_id, data_limit, rp_data_limit):
@@ -527,7 +529,7 @@ class FirestoreAdapter:
         # ベクトル検索が指定されていない場合は、単純にlimit件を返す
         return all_insurance_info[:limit]
 
-    def update_talk_state(self, db, user_id: str, talk_status: int = None, info_type: str = None, info_data: dict = None, related_articles: list = None, should_delete: bool = False):
+    def update_talk_state(self, db, user_id: str, talk_status: int = None, personal_info: str = None, related_articles: list = None, talk_mappings: list = None, should_delete: bool = False):
         """トークモードの状態と情報を一括で更新する関数
         
         Args:
@@ -536,10 +538,13 @@ class FirestoreAdapter:
             talk_status (int, optional): 状態を示す数値
                 0: 未選択/初期状態
                 1: 個人情報を質問中
-                2: 通常会話中
-            info_type (str, optional): 情報の種類 ('personal_info' | その他必要な情報タイプ)
-            info_data (dict, optional): 保存するデータ
+                2: 関連時事ネタの提供/続行確認
+                3: マッピング作成/続行確認
+                4: トーク生成中
+                5: 提案が完了した状態
+            personal_info (str, optional): 顧客個人情報
             related_articles (list, optional): 関連記事のリスト
+            talk_mappings (list, optional): 保険提案トークのマッピングリスト
             should_delete (bool, optional): トーク情報を削除するかどうか
         """
         doc_ref = db.collection('userIds').document(user_id)
@@ -552,20 +557,24 @@ class FirestoreAdapter:
                 'botType': 'ta'
             })
 
-        # トーク情報の更新
-        if info_type and info_data and not should_delete:
-            update_data[f'talk_{info_type}'] = info_data
+        # 顧客個人情報の更新
+        if personal_info and not should_delete:
+            update_data['talk_personal_info'] = personal_info
 
         # 関連記事情報の更新
-        if related_articles is not None:
+        if related_articles and not should_delete:
             update_data['talk_related_articles'] = related_articles
+
+        # トークマッピングの更新
+        if talk_mappings and not should_delete:
+            update_data['talk_mappings'] = talk_mappings
 
         # トーク情報の削除
         if should_delete:
             update_data.update({
-                'talk_status': 0,
                 'talk_personal_info': None,
-                'talk_related_articles': None
+                'talk_related_articles': None,
+                'talk_mappings': None
             })
 
         # データの更新（一括で実行）

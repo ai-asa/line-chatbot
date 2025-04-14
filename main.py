@@ -355,6 +355,10 @@ def message_process(event,userId,user_data,replyToken):
     # talk_statusに基づく処理を追加
     elif talk_status == 1:
         return process_talk_info(userId, mesText)
+    elif talk_status == 2:
+        return process_mapping_proposal(userId, user_data, mesText)
+    elif talk_status == 3:
+        return process_talk_proposal(userId, user_data, mesText)
     else:
         mt = messageText(event,userId,mesText,user_data)
         return mt.res_text()
@@ -509,6 +513,223 @@ def process_talk_info(userId, mesText):
         
         # 返信メッセージを作成
         messages = ["ありがとうございます。\nご提供いただいた情報を保存しました"]
+        messages.append("お客様情報に関連して、保険提案につながる可能性のある話題を調査しました")
+        
+        # 関連記事情報を格納するリスト
+        related_articles = []
+        
+        if not relevant_numbers:
+            isNotRelated = True
+        
+        if isNotRelated:
+            # AIによる話題生成（ネット検索モデルを使用）
+            generate_prompt = gp.get_talk_topic_generation_prompt(mesText)
+            generated_response = oa.openai_chat("gpt-4o-search-preview", generate_prompt)
+            
+            if not generated_response:
+                return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+            
+            # 生成された話題を抽出
+            topics = []
+            for topic_num in ['first', 'second', 'third']:
+                topic_match = re.search(f'<{topic_num}_topic>(.*?)</{topic_num}_topic>', generated_response, re.DOTALL)
+                if topic_match:
+                    topic = topic_match.group(1).strip()
+                    if topic:
+                        topics.append(topic)
+            
+            if not topics:
+                return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+            
+            # 生成された話題をメッセージに追加
+            for i, topic in enumerate(topics, 1):
+                messages.append(f"{i}. {topic}")
+                related_articles.append({'content': topic})
+        else:
+            # 関連性のある記事を番号付きで追加
+            for i, num in enumerate(relevant_numbers, 1):
+                if 1 <= num <= len(contents):
+                    content = contents[num-1]
+                    messages.append(f"{i}. {content}")
+                    related_articles.append({'content': content})
+        
+        messages.append("\nこの内容を基に、保険提案セリフを生成しますか？\n「はい」か「いいえ」で回答してください")
+        
+        # Firestoreに個人情報と関連記事を保存
+        fa.update_talk_state(db, userId, 
+            talk_status=2,  # 次の状態へ
+            personal_info=mesText,
+            related_articles=related_articles
+        )
+        
+        return messages
+        
+    except Exception as e:
+        logging.error(f"Error in process_talk_info: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください。"]
+
+def process_mapping_proposal(userId, user_data, mesText):
+    """トークモードでの保険提案マッピングを処理する関数"""
+    if mesText == 'はい':
+        return create_mapping_proposal(userId,user_data)
+    else: # mesText == 'いいえ'
+        return cancel_mapping_proposal(userId)
+    
+def create_mapping_proposal(userId, user_data):
+    """
+    個人情報と関連記事から保険提案トークのマッピングを生成する
+    
+    Args:
+        userId (str): ユーザーID
+        user_data (dict): ユーザーデータ
+        
+    Returns:
+        list: リプライメッセージのリスト
+    """
+    try:
+        # 個人情報と関連記事を取得
+        personal_info = user_data.get('talk_personal_info')
+        related_articles = user_data.get('talk_related_articles', [])
+        
+        if not personal_info or not related_articles:
+            return ["申し訳ありません。エラーが発生しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+        
+        # 各記事に対してマッピングを生成
+        talk_mappings = []
+        for article in related_articles:
+            content = article.get('content')
+            if not content:
+                continue
+                
+            # AIによるマッピング生成
+            prompt = gp.get_talk_mapping_prompt(personal_info, content)
+            mapping_response = oa.openai_chat("gpt-4o", prompt)
+            
+            if not mapping_response:
+                continue
+                
+            # 各要素を正規表現で抽出
+            title_match = re.search(r'<title>(.*?)</title>', mapping_response, re.DOTALL)
+            category_match = re.search(r'<insurance_category>(.*?)</insurance_category>', mapping_response, re.DOTALL)
+            question_match = re.search(r'<needs_question>(.*?)</needs_question>', mapping_response, re.DOTALL)
+            hook_match = re.search(r'<hook_phrase>(.*?)</hook_phrase>', mapping_response, re.DOTALL)
+            
+            if all([title_match, category_match, question_match, hook_match]):
+                mapping = {
+                    'content': content,
+                    'title': title_match.group(1).strip(),
+                    'insurance_category': category_match.group(1).strip(),
+                    'needs_question': question_match.group(1).strip(),
+                    'hook_phrase': hook_match.group(1).strip()
+                }
+                talk_mappings.append(mapping)
+        
+        if not talk_mappings:
+            return ["申し訳ありません。提案セリフの生成に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+        
+        # Firestoreの状態を更新
+        fa.update_talk_state(db, userId, 
+            talk_status=3,
+            talk_mappings=talk_mappings
+        )
+        
+        # レスポンスメッセージを生成
+        messages = ["以下の内容で保険提案トークを作成できます："]
+        mapping_text = []
+        for i, mapping in enumerate(talk_mappings, 1):
+            message = f"\n{i}. {mapping['title']}\n"
+            message += f"・提案保険：{mapping['insurance_category']}\n"
+            message += f"・ニーズ喚起：{mapping['needs_question']}\n"
+            message += f"・切込みセリフ：{mapping['hook_phrase']}\n"
+            mapping_text.append(message)
+        messages.append("\n".join(mapping_text))
+            
+        messages.append("\nこの内容を想定した保険提案トークを生成しますか？\n「はい」か「いいえ」で回答してください")
+        
+        return messages
+        
+    except Exception as e:
+        logging.error(f"Error in create_talk_proposal: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+
+def cancel_mapping_proposal(userId):
+    """トークモードでの保険提案セリフをキャンセルする関数"""
+    fa.update_talk_state(db, userId, talk_status=1, should_delete=True)
+    
+    return [
+        "保険提案セリフ作成をキャンセルしました。",
+        "再度、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+        "例：\n年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都"
+    ]
+
+def process_talk_proposal(userId, user_data, mesText):
+    """トークモードでの保険提案トークを処理する関数"""
+    if mesText == 'はい':
+        return create_talk_proposal(userId,user_data)
+    else: # mesText == 'いいえ'
+        return cancel_talk_proposal(userId)
+    
+def create_talk_proposal(userId, user_data):
+    try:
+        pass
+        
+    except Exception as e:
+        logging.error(f"Error in create_talk_proposal: {str(e)}")
+        return ["申し訳ありません。エラーが発生しました。再度、個人情報を入力してください"]
+
+def cancel_talk_proposal(userId):
+    """トークモードでの保険提案トークをキャンセルする関数"""
+    fa.update_talk_state(db, userId, talk_status=0, should_delete=True)
+    
+    return [
+        "保険提案トーク作成をキャンセルしました。",
+        "再度、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください",
+        "例：\n年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都　など"
+    ]
+
+def process_execute_proposal(userId,user_data,mesText,replyToken):
+    """乗り換え提案を実行する関数"""
+    if mesText == 'はい':
+        return create_proposal(userId,user_data,replyToken)
+    else:
+        return cancel_proposal(userId)
+
+def process_talk_info(userId, mesText):
+    """トークモードでの個人情報を処理する関数"""
+    try:
+        # テキストをベクトル化
+        vector = oa.embedding([mesText])[0]
+        
+        # ベクトル検索で関連記事を取得
+        search_results = fa.get_article_info(db, vector, 5)  # 上位5件を取得
+        
+        isNotRelated = True
+        if search_results:
+            isNotRelated = False
+        
+        # 検索結果からcontentのリストを作成
+        contents = [result['content'] for result in search_results]
+        
+        # AIによる関連性の評価
+        verify_prompt = gp.get_talk_content_verification_prompt(mesText, contents)
+        verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+        
+        # 関連性のある記事番号を抽出
+        relevant_numbers = []
+        if not verification_response:
+            return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+        match = re.search(r'<relevant_numbers>\s*(.*?)\s*</relevant_numbers>', verification_response, re.DOTALL)
+        if not match:
+            return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
+        numbers_str = match.group(1).strip()
+        if numbers_str.lower() == 'none':
+            isNotRelated = True
+        else:
+            # カンマ区切りの番号をリストに変換
+            relevant_numbers = [int(num.strip()) for num in numbers_str.split(',')]
+        
+        # 返信メッセージを作成
+        messages = ["ありがとうございます。\nご提供いただいた情報を保存しました"]
         messages.append("また、お客様情報に関連して、保険提案につながる可能性のある話題を調査しました")
         
         # 関連記事情報を格納するリスト
@@ -549,13 +770,12 @@ def process_talk_info(userId, mesText):
                     messages.append(f"{i}. {content}")
                     related_articles.append({'content': content})
         
-        messages.append("\nこの内容を基に、保険提案トークを作成しますか？\nはい/いいえ で回答してください。")
+        messages.append("\nこの内容を基に、保険提案セリフを生成しますか？\n「はい」か「いいえ」で回答してください")
         
         # Firestoreに個人情報と関連記事を保存
         fa.update_talk_state(db, userId, 
             talk_status=2,  # 次の状態へ
-            info_type='personal_info',
-            info_data={'info': mesText},
+            personal_info=mesText,
             related_articles=related_articles
         )
         
@@ -868,8 +1088,11 @@ def event_postback(event,replyToken,userId,user_data):
     pending_action = user_data['pending_action']
     isRetryRP = user_data['isRetryRP']
     transfer_status = user_data.get('transfer_status', 0)
+    talk_status = user_data.get('talk_status', 0)
     if 1 <= transfer_status <= 4:
         fa.update_insurance_state(db, userId, transfer_status=0, should_delete=True)
+    elif 1 <= talk_status <= 3:
+        fa.update_talk_state(db, userId, talk_status=0, should_delete=True)
     elif pending_action:
         text = cancel_update_sub(userId)
     elif isRetryRP:
