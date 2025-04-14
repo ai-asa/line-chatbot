@@ -331,17 +331,27 @@ Youtubeの検索結果のリストは以下の通りです：
 """
       return prompt
    
-   def get_rp_prompt(self,rp_setting, history_text,user_input):
-
+   def get_rp_prompt(self, rp_setting, history_text, user_input, summary=None):
+      """RPの会話プロンプトを生成するメソッド
+      
+      Args:
+          rp_setting (str): RPの設定情報
+          history_text (str): 会話履歴
+          user_input (str): ユーザーの入力
+          summary (str, optional): 要約文。Defaults to None.
+      """
       if history_text == "":
-         history_text = "まだ会話はありません\n"
+          history_text = "直近の会話はありません\n"
 
-      prompt = f"""あなたは以下の設定で説明される立場・人物像を持つ人物であり、現在、保険営業員からの保険提案を受けています。ガイドラインに従い、保険営業員の提案に応答してください。
+      summary_context = ""
+      if summary is None:
+         prompt = f"""あなたはゼロコンという名前の以下の設定で説明される立場・人物像を持つ人物であり、現在、保険営業員からの保険提案を受けています。ガイドラインに従い、保険営業員の提案に応答してください。
 
 あなたの設定：
 <your_setting>
 ■ 名前：ゼロコン
-{rp_setting}</your_setting>
+{rp_setting}
+</your_setting>
 
 ガイドライン：
 1. 設定に準じた人物像を想定し、その性格や特性を考慮して会話を進めること
@@ -355,8 +365,9 @@ Youtubeの検索結果のリストは以下の通りです：
 訪問営業により、保険営業員があなたの家に来たところ
 </situation>
 
-営業員とAIアシスタントのこれまでの会話：
-<history>{history_text}
+これまでの会話：
+<history>
+{history_text}
 </history>
 
 現在の営業員の発言：
@@ -368,10 +379,265 @@ Youtubeの検索結果のリストは以下の通りです：
 - 適切に改行してください
 - 自ら会話を振らず、あくまで営業員の発言に応答してください
 - 返答は簡潔にし、質問があるとき以外は1文程度の短い文章で応答してください
+- 要約文がある場合は、その内容を考慮して会話の一貫性を保ってください
 
 営業員の発言に対し、応答してください："""
+
+
+      else:
+          summary_context = f"""
+これまでの会話の要約：
+<summary>
+{summary}
+</summary>"""
+
+      prompt = f"""あなたはゼロコンという名前の以下の設定で説明される立場・人物像を持つ人物であり、現在、保険営業員からの保険提案を受けています。ガイドラインに従い、保険営業員の提案に応答してください。
+
+あなたの設定：
+<your_setting>
+■ 名前：ゼロコン
+{rp_setting}
+</your_setting>
+
+ガイドライン：
+1. 設定に準じた人物像を想定し、その性格や特性を考慮して会話を進めること
+2. 設定に準じた人物の立場を想定し、抱える将来不安やニーズを想定して会話を進めること
+3. 会話は営業員が主導できるように、なるべくあなたから質問してはならない
+4. 営業員に保険を提案された際は、クリティカルな質問をすること
+5. 最終的に、それまでの会話を考慮し、保険提案に対する成否を判断すること
+
+現在の状況：
+<situation>
+訪問営業により、保険営業員があなたの家に来たところ
+</situation>
+
+{summary_context}
+
+直近の会話：
+<history>
+{history_text}
+</history>
+
+現在の営業員の発言：
+<current_comment>
+{user_input}
+</current_comment>
+
+応答の注意事項：
+- 適切に改行してください
+- 自ら会話を振らず、あくまで営業員の発言に応答してください
+- 返答は簡潔にし、質問があるとき以外は1文程度の短い文章で応答してください
+- 要約文がある場合は、その内容を考慮して会話の一貫性を保ってください
+
+営業員の発言に対し、応答してください："""
+
       return prompt
    
+   def get_rp_summary_prompt(self, history_text, previous_summary=None):
+      """RPの会話を要約するためのプロンプト
+      
+      Args:
+          history_text (str): 会話履歴
+          previous_summary (str, optional): 前回の要約文。Defaults to None.
+      """
+      summary_context = ""
+      if previous_summary is None:
+         prompt = f"""あなたは保険営業のロールプレイ会話を要約する専門家です。
+顧客(名前：ゼロコン)と保険営業員のこれまでの会話内容を分析し、重要なポイントを簡潔に要約してください。
+
+これまでの会話：
+<conversation>
+{history_text}
+</conversation>
+
+以下の点に注意して要約を作成してください：
+1. 顧客の反応や態度の変化
+2. 明らかになった顧客のニーズや懸念事項
+3. 営業員の提案内容とその効果
+4. 重要な質疑応答の内容
+5. 前回の要約がある場合は、その内容も踏まえて一貫性のある要約を作成
+
+出力形式：
+<summary>
+[ここに要約を記述]
+</summary>"""
+
+      else:
+          summary_context = f"""
+これまでの会話の要約：
+<previous_summary>
+{previous_summary}
+</previous_summary>"""
+
+      prompt = f"""あなたは保険営業のロールプレイ会話を要約する専門家です。
+顧客(名前：ゼロコン)と保険営業員のこれまでの会話内容を分析し、重要なポイントを簡潔に要約してください。
+
+{summary_context}
+
+直近の会話：
+<conversation>
+{history_text}
+</conversation>
+
+以下の点に注意して要約を作成してください：
+1. 顧客の反応や態度の変化
+2. 明らかになった顧客のニーズや懸念事項
+3. 営業員の提案内容とその効果
+4. 重要な質疑応答の内容
+5. これまでの会話の要約と直近の会話を踏まえて一貫性のある要約を作成
+
+出力形式：
+<summary>
+[ここに要約を記述]
+</summary>"""
+      return prompt
+
+   def get_proposal_detection_prompt(self, history_text, user_text, rp_summary) -> str:
+      """
+      保険提案の切込みかどうかを判定するためのプロンプト
+      
+      Args:
+          history_text (str): 会話履歴
+          user_text (str): 営業員の発言
+          rp_summary (str): 前回の要約文
+          
+      Returns:
+          str: 判定用のプロンプト
+      """
+      if history_text == "":
+         history_text = "直近の会話はありません\n"
+      
+      if rp_summary is None:
+
+         prompt = f"""あなたは保険営業の会話分析の専門家です。会話は顧客であるゼロコンと保険営業員の間で行われています。
+営業員の直前の発言が保険提案の切込み（具体的な保険商品の提案）かどうかを判定してください。
+
+これまでの会話：
+<conversation>
+{history_text}
+</conversation>
+
+営業員の直前の発言：
+<salesperson_text>
+{user_text}
+</salesperson_text>
+
+判定基準：
+1. 具体的な保険商品や保障内容の提案が含まれているか
+2. 保険料や保障額など、具体的な数字の提示があるか
+3. 加入や契約を促す表現が含まれているか
+
+以下は切込みとして判定しないケース：
+- 一般的な保険の説明
+- ニーズ喚起のための質問
+- 雑談や状況確認
+- 保険の必要性の説明
+
+判定結果を以下の形式で出力してください：
+<is_proposal>
+[true または false のみを出力]
+</is_proposal>
+"""
+      else: # rp_summaryがある場合
+         prompt = f"""あなたは保険営業の会話分析の専門家です。会話は顧客であるゼロコンと保険営業員の間で行われています。
+営業員の直前の発言が保険提案の切込み（具体的な保険商品の提案）かどうかを判定してください。
+
+これまでの会話の要約：
+<summary>
+{rp_summary}
+</summary>
+
+直近の会話：
+<conversation>
+{history_text}
+</conversation>
+
+営業員の直前の発言：
+<salesperson_text>
+{user_text}
+</salesperson_text>
+
+判定基準：
+1. 具体的な保険商品や保障内容の提案が含まれているか
+2. 保険料や保障額など、具体的な数字の提示があるか
+3. 加入や契約を促す表現が含まれているか
+
+以下は切込みとして判定しないケース：
+- 一般的な保険の説明
+- ニーズ喚起のための質問
+- 雑談や状況確認
+- 保険の必要性の説明
+
+判定結果を以下の形式で出力してください：
+<is_proposal>
+[true または false のみを出力]
+</is_proposal>
+"""
+      return prompt
+
+   def get_proposal_acceptance_prompt(self, rp_setting: str, full_history: list) -> str:
+      """
+      保険提案を受けるかどうかを判定するためのプロンプト
+      
+      Args:
+          rp_setting (str): 顧客の設定情報
+          full_history (list): 全会話履歴
+          
+      Returns:
+          str: 判定用のプロンプト
+      """
+      # 会話履歴をテキスト形式に変換
+      history_text = "\n".join([
+         f"{conv['speaker']}: {conv['content']}"
+         for conv in full_history
+      ])
+
+      prompt = f"""あなたは保険営業の会話分析の専門家です。
+これまでの会話内容を分析し、顧客が保険提案を受け入れるかどうかを判定してください。
+
+顧客情報：
+<customer_info>
+{rp_setting}
+</customer_info>
+
+会話履歴：
+<conversation_history>
+{history_text}
+</conversation_history>
+
+以下の5つのフェーズに基づいて分析を行ってください：
+
+1. プリアプローチ
+- 初期の関係構築は適切に行われたか
+- 顧客との信頼関係は築けているか
+
+2. アプローチ
+- 顧客の状況やニーズは十分にヒアリングされたか
+- 提案の土台となる情報は収集できているか
+
+3. ファクトファインディング
+- 顧客の不安や課題は明確になっているか
+- それらは提案内容と関連付けられているか
+
+4. プレゼンテーション
+- 提案内容は顧客のニーズに合致しているか
+- 説明は分かりやすく、説得力があったか
+
+5. クロージング
+- 顧客の反応や態度は前向きか
+- 重要な懸念事項は解消されているか
+
+以下の形式で出力してください：
+<analysis>
+[各フェーズの分析結果と、提案受諾の判断理由を記述]
+</analysis>
+
+<reaction>
+[提案を受け入れるか受け入れないかを答えるゼロコン氏の発言]
+</reaction>
+"""
+      return prompt
+
    def get_rpr_prompt(self,rp_setting, history_text):
       prompt = f"""あなたは保険営業の会話分析の専門AIです。以下の会話記録をもとに、営業員の提案が適切に行われているかを評価してください。
 
@@ -412,6 +678,7 @@ Youtubeの検索結果のリストは以下の通りです：
 出力フォーマット：
 <output_format>
 - 各フェーズごとに「良かった点」と「改善点」を箇条書きで示してください。
+- 各フェーズごとに100点満点で採点してください。
 - 全体の総評として、会話の流れや提案の整合性についても簡潔にまとめてください。
 </output_format>
 

@@ -191,6 +191,7 @@ class FirestoreAdapter:
             "original_sub_status": "free",
             'isAlreadyRP': False,
             'rp_setting': None,
+            'rp_summary': None,
             'isRetryRP': False,
             'transfer_status': 0,
             'insurance_insured_info': None,
@@ -200,6 +201,8 @@ class FirestoreAdapter:
             'talk_personal_info': None,  # トークモードでの個人情報を保存するフィールド
             'talk_related_articles': None,  # トークモードでの関連記事を保存するフィールド
             'talk_mappings': None,  # トークモードでのマッピング情報を保存するフィールド
+            'current_insurance_info': None, # 乗り換えモードでの現在の保険情報を保存するフィールド
+            'target_insurance_info': None, # 乗り換えモードでの提案先の保険情報を保存するフィールド
         }
 
     def get_user_data(self, db, user_id, data_limit, rp_data_limit):
@@ -323,7 +326,7 @@ class FirestoreAdapter:
             "trial_end": trial_end_jst.strftime('%Y年%m月%d日%H時%M分')
         }
 
-    def reset_rp_history(self, db, user_id, isResetHistory=False, rp_setting=None, isAlreadyRP: bool = None, isRetryRP: bool = None):
+    def reset_rp_history(self, db, user_id, isResetHistory=False, isResetFullHistory=False, isResetSummary=False, rp_setting=None, isAlreadyRP: bool = None, isRetryRP: bool = None):
         """RPの会話履歴とRP設定をリセットする
         
         ・必要なフィールド更新は単体のupdateで行い、
@@ -361,6 +364,22 @@ class FirestoreAdapter:
             except Exception as e:
                 print(f"Error deleting rp_history subcollection: {e}")
                 raise
+        
+        if isResetFullHistory:
+            try:
+                batch = db.batch()
+                full_history_ref = doc_ref.collection('rp_full_history')
+                docs = full_history_ref.get()
+                for doc in docs:
+                    batch.delete(doc.reference)
+                batch.commit()
+            except Exception as e:
+                print(f"Error deleting rp_full_history subcollection: {e}")
+                raise
+
+        if isResetSummary:
+            update_data['rp_summary'] = None
+        
 
     def set_initial_rp(self, db, user_id, rp_setting):
         """初めてのRP設定を保存する"""
@@ -368,31 +387,43 @@ class FirestoreAdapter:
         doc_ref.update({
             'isAlreadyRP': True,
             'rp_setting': rp_setting,
-            'rp_history': []
+            'rp_summary': None,
+            'rp_history': [],
+            'rp_full_history': []
         })
 
-    def update_rp_history(self, db, userId, rp_data_limit, salesperson=None, customer=None):
+    def update_rp_history(self, db, userId, rp_data_limit, salesperson=None, customer=None, summary=None):
         """RPの会話履歴を更新する"""
         userIds_ref = db.collection('userIds').document(userId)
         history_ref = userIds_ref.collection('rp_history')
+        full_history_ref = userIds_ref.collection('rp_full_history')
 
         base_time = datetime.datetime.now(datetime.timezone.utc)
         
+        # 通常の会話履歴の更新
         if salesperson:
-            salesperson_message = {
+            message = {
                 "timestamp": base_time.isoformat(),
-                "speaker": 'salesperson',
+                "speaker": '保険営業員',
                 "content": salesperson
             }
-            history_ref.add(salesperson_message)
+            history_ref.add(message)
+            full_history_ref.add(message)  # 全文履歴にも追加
 
         if customer:
-            customer_message = {
+            message = {
                 "timestamp": (base_time + datetime.timedelta(microseconds=1)).isoformat(),
-                "speaker": 'you',
+                "speaker": 'ゼロコン',
                 "content": customer
             }
-            history_ref.add(customer_message)
+            history_ref.add(message)
+            full_history_ref.add(message)  # 全文履歴にも追加
+
+        # 要約文の更新
+        if summary is not None:
+            userIds_ref.set({
+                'rp_summary': summary
+            }, merge=True)
 
         # ユーザードキュメントが存在しない場合は初期化
         if not userIds_ref.get().exists:
@@ -415,7 +446,7 @@ class FirestoreAdapter:
         messages = [snapshot.to_dict() for snapshot in snapshots]
         return messages
 
-    def update_insurance_state(self, db, user_id: str, transfer_status: int = None, info_type: str = None, info_data: dict = None, should_delete: bool = False):
+    def update_insurance_state(self, db, user_id: str, transfer_status: int = None, info_type: str = None, info_data: dict = None, current_insurance_info: dict = None, target_insurance_info: dict = None, should_delete: bool = False):
         """保険関連の状態と情報を一括で更新する関数
         
         Args:
@@ -426,10 +457,13 @@ class FirestoreAdapter:
                 1: 被保険者の年齢、性別、その他の参考情報
                 2: 現在の保険会社&保険商品名と値段を質問中
                 3: 乗り換え先の保険商品名と値段を質問中
-                4: 情報に誤りがないか、処理を実行するかを質問中
-                5: 提案が完了した状態
+                4: 保険商品の情報を収集
+                5: 乗り換え提案を作成
+                6: 提案が完了した状態
             info_type (str, optional): 情報の種類 ('insured_info' | 'current_insurance' | 'target_insurance')
             info_data (dict, optional): 保存するデータ
+            current_insurance_info (dict, optional): 現在の保険情報
+            target_insurance_info (dict, optional): 提案先の保険情報
             should_delete (bool, optional): 保険情報を削除するかどうか
         """
         doc_ref = db.collection('userIds').document(user_id)
@@ -443,15 +477,23 @@ class FirestoreAdapter:
             })
 
         # 保険情報の更新
-        if info_type and info_data and not should_delete:
+        if info_type is not None and info_data is not None and not should_delete:
             update_data[f'insurance_{info_type}'] = info_data
+
+        if current_insurance_info is not None:
+            update_data['insurance_current_insurance'] = current_insurance_info
+
+        if target_insurance_info is not None:
+            update_data['insurance_target_insurance'] = target_insurance_info
 
         # 保険情報の削除
         if should_delete:
             update_data.update({
                 'insurance_insured_info': None,
                 'insurance_current_insurance': None,
-                'insurance_target_insurance': None
+                'insurance_target_insurance': None,
+                'current_insurance_info': None,
+                'target_insurance_info': None
             })
 
         # データの更新（一括で実行）
@@ -557,15 +599,15 @@ class FirestoreAdapter:
             })
 
         # 顧客個人情報の更新
-        if personal_info and not should_delete:
+        if personal_info is not None and not should_delete:
             update_data['talk_personal_info'] = personal_info
 
         # 関連記事情報の更新
-        if related_articles and not should_delete:
+        if related_articles is not None and not should_delete:
             update_data['talk_related_articles'] = related_articles
 
         # トークマッピングの更新
-        if talk_mappings and not should_delete:
+        if talk_mappings is not None and not should_delete:
             update_data['talk_mappings'] = talk_mappings
 
         # トーク情報の削除
@@ -647,3 +689,45 @@ class FirestoreAdapter:
         
         # ベクトル検索が指定されていない場合は、単純にlimit件を返す
         return all_article_info[:limit]
+
+    def get_rp_prompt(self,rp_setting, history_text,user_input):
+        if history_text == "":
+            history_text = "まだ会話はありません\n"
+
+        prompt = f"""あなたは以下の設定で説明される立場・人物像を持つ人物であり、現在、保険営業員からの保険提案を受けています。ガイドラインに従い、保険営業員の提案に応答してください。
+
+あなたの設定：
+<your_setting>
+■ 名前：ゼロコン
+{rp_setting}</your_setting>
+
+ガイドライン：
+1. 設定に準じた人物像を想定し、その性格や特性を考慮して会話を進めること
+2. 設定に準じた人物の立場を想定し、抱える将来不安やニーズを想定して会話を進めること
+3. 会話は営業員が主導できるように、なるべくあなたから質問してはならない
+4. 営業員に保険を提案された際は、クリティカルな質問をすること
+5. 最終的に、それまでの会話を考慮し、保険提案に対する成否を判断すること
+
+現在の状況：
+<situation>
+訪問営業により、保険営業員があなたの家に来たところ
+</situation>
+
+これまでの会話：
+<history>
+{history_text}
+</history>
+
+現在の営業員の発言：
+<current_comment>
+{user_input}
+</current_comment>
+
+応答の注意事項：
+- 適切に改行してください
+- 自ら会話を振らず、あくまで営業員の発言に応答してください
+- 返答は簡潔にし、質問があるとき以外は1文程度の短い文章で応答してください
+- 要約文がある場合は、その内容を考慮して会話の一貫性を保ってください
+
+営業員の発言に対し、応答してください："""
+        return prompt
