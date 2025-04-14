@@ -537,11 +537,10 @@ class FirestoreAdapter:
             user_id (str): ユーザーID
             talk_status (int, optional): 状態を示す数値
                 0: 未選択/初期状態
-                1: 個人情報を質問中
-                2: 関連時事ネタの提供/続行確認
-                3: マッピング作成/続行確認
-                4: トーク生成中
-                5: 提案が完了した状態
+                1: 個人情報を質問中/関連時事ネタの提供/続行確認
+                2: マッピング作成/続行確認
+                3: トーク生成中/続行確認
+                4: 提案が完了した状態
             personal_info (str, optional): 顧客個人情報
             related_articles (list, optional): 関連記事のリスト
             talk_mappings (list, optional): 保険提案トークのマッピングリスト
