@@ -1,3 +1,4 @@
+# %%
 import configparser
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -57,6 +58,44 @@ class OpenaiAdapter:
                 if i == self.retry_limit - 1:
                     return None
                 continue
+    
+    def openai_search(self, openai_model, prompt, context_size="medium"):
+        system_prompt = [
+            {"role": "user", "content": prompt}
+        ]
+        for i in range(self.retry_limit):
+            try:
+                # Search-previewモデルの場合はtemperatureパラメータを除外
+                options = {
+                    "search_context_size": context_size,  # 検索深度
+                    "user_location": {
+                        "type": "approximate",
+                        "approximate": {
+                            "country": "JP",  # 地域
+                        },
+                    },
+                }
+                response = self.client.chat.completions.create(
+                    model=openai_model,
+                    web_search_options=options,
+                    messages=system_prompt
+                )
+                text = response.choices[0].message.content
+
+                if text and text.strip():
+                    self.logger.info(f"AIからの応答を受信: {text[:100]}...")
+                    return text.strip()
+                else:
+                    self.logger.warning(f"AIからの応答が空でした (試行 {i + 1}/{self.retry_limit})")
+                    if i == self.retry_limit - 1:
+                        return None
+                    continue
+
+            except Exception as error:
+                self.logger.error(f"GPT呼び出し時にエラーが発生: {str(error)} (試行 {i + 1}/{self.retry_limit})")
+                if i == self.retry_limit - 1:
+                    return None
+                continue
 
     def embedding(self, texts):
         """
@@ -77,3 +116,6 @@ class OpenaiAdapter:
         except Exception as error:
             self.logger.error(f"埋め込みベクトル生成時にエラーが発生: {str(error)}")
             return []
+        
+
+# %%

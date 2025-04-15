@@ -276,6 +276,12 @@ class FirestoreAdapter:
             rp_snapshots = rp_history_ref.order_by('timestamp', direction=firestore.Query.ASCENDING).limit(rp_data_limit).get()
             rp_history = [snapshot.to_dict() for snapshot in rp_snapshots]
             user_data['rp_history'] = rp_history
+
+            # rp_full_history サブコレクションのデータ取得
+            rp_full_history_ref = user_ref.collection('rp_full_history')
+            rp_full_snapshots = rp_full_history_ref.order_by('timestamp', direction=firestore.Query.ASCENDING).get()
+            rp_full_history = [snapshot.to_dict() for snapshot in rp_full_snapshots]
+            user_data['rp_full_history'] = rp_full_history
             
             return user_data
         else:
@@ -378,7 +384,13 @@ class FirestoreAdapter:
                 raise
 
         if isResetSummary:
-            update_data['rp_summary'] = None
+            try:
+                doc_ref.update({
+                    'rp_summary': None
+                })
+            except Exception as e:
+                print(f"Error resetting rp_summary: {e}")
+                raise
         
 
     def set_initial_rp(self, db, user_id, rp_setting):

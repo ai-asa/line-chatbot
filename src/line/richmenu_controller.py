@@ -192,7 +192,7 @@ class RichmenuController:
                     },
                     "action": {
                         "type": "postback",
-                        "data": "XXX"
+                        "data": "3980"
                     }
                 },
                 {

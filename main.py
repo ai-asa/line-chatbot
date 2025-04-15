@@ -334,7 +334,7 @@ def message_process(event,userId,user_data):
 
     if pending_action: # サブスクリプションのアクションが保留されている場合
         return sub_act(pending_action,mesText,userId,user_data)
-    if isRetryRP: # RPをリトライ要請されている場合
+    elif isRetryRP: # RPをリトライ要請されている場合
         return retry_rp(userId,mesText,user_data)
     else:
         mt = messageText(event,userId,mesText,user_data)
@@ -397,7 +397,7 @@ def exec_start_trial(userId):
     trial_data = fa.set_trial_period(db,userId)
     trial_start = trial_data['trial_start']
     trial_end = trial_data['trial_end']
-    return ["【開始通知】\n無料トライアルが開始されました", f"期間は{trial_start}から{trial_end}までです","期間中は中級プランと同様の機能をご利用いただけます", "ご利用いただき誠にありがとうございます"]
+    return ["【開始通知】\n無料トライアルが開始されました", f"期間は{trial_start}から{trial_end}までです","期間中は上級プランと同様の機能をご利用いただけます", "ご利用いただき誠にありがとうございます"]
 
 def exec_upgrade_sub(sub_id,new_price_id,userId,pending_action):
     sa.upgrade_subscription(sub_id, new_price_id)
@@ -466,7 +466,7 @@ def mode_change(userId,postType,user_data):
     # elif postType == "yo":
     #     judg,text = mode_yo(current_plan)
     elif postType == "ta":
-        judg,text = mode_ta(userId,user_data,current_plan)
+        judg,text = mode_ta(userId,current_plan)
     elif postType == "tr":
         judg,text = mode_tr(userId,current_plan)
     elif postType == "gs":
@@ -568,20 +568,38 @@ def rpr_text(userId,user_data):
     """
     if not user_data['isAlreadyRP']:
         return ["営業ロープレは開始されていません", "営業ロープレを開始するには、メニューの「開始＆リセット」ボタンをクリックしてください"]
-    rp_history = user_data['rp_history']
+    rp_full_history = user_data['rp_full_history']
+    rp_full_history_text = get_text(rp_full_history)
     rp_setting = user_data['rp_setting']
-    # res = norm_rpr_text(oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_setting,rp_history)))
-    res = oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_setting,rp_history))
+
+    res = oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_setting,rp_full_history_text))
+    response = re.search(r'<output_format>(.*?)</output_format>', res, re.DOTALL)
+    if not response:
+        return ["評価の取得に失敗しました。再度、メニューから「終了＆フィードバック」を選択してください"]
+    
     text = []
     if res == None:
         text = ["営業ロープレを終了し、ゼロコンAIによる提案の評価を行います！","申し訳ございません。エラーにより、評価結果が取得できませんでした"]
     else:
-        text = ["営業ロープレを終了し、ゼロコンAIによる提案の評価を行います！", "まず、今回のお客様の設定は以下の通りでした。\n\n【お客様の設定】\n" + rp_setting, "提案の評価は以下の通りです。\n\n======提案の評価======\n" + res +"\n====================="]
-    restart_text = ["もう一度同じ設定で営業ロープレを開始しますか？", "※「はい」と返信すると会話をリセットし、同じ設定で営業ロープレを開始します\n(モード切替や「はい」以外の返信で終了します)"]
+        text = ["営業ロープレを終了し、ゼロコンAIによる提案の評価を行います！", 
+                "まず、今回の私(お客様)の設定は以下の通りでした。\n\n【お客様の設定】\n" + rp_setting, 
+                "提案の評価は以下の通りです。\n\n======提案の評価======\n" + response.group(1) +"\n====================="]
+    
+    restart_text = ["もう一度同じ設定で営業ロープレを開始しますか？", 
+                    "※「はい」と返信すると会話をリセットし、同じ設定で営業ロープレを開始します\n(モード切替や「はい」以外の返信で終了します)"]
     
     text.extend(restart_text)
     fa.reset_rp_history(db, userId, isResetHistory=True, isResetFullHistory=True, isResetSummary=True, isRetryRP=True)
     return text
+
+def get_text(rp_history):
+    text_list = []
+    for conv in rp_history:
+        text = f"""
+<speaker>{conv['speaker']}</speaker>
+<message>{conv['content']}</message>"""
+        text_list.append(text)
+    return "".join(text_list)
 
 # def norm_rpr_text(text):
 #     pattern = r'<response>(.*?)</response>'
@@ -627,7 +645,8 @@ class RegStripe:
 
     def det_sub_act(self, current_plan, original_plan, next_plan, desired_plan):
         plan_order = ['free', 'try', '980', '1980', '3980']
-        current_index = plan_order.index(original_plan)
+        original_index = plan_order.index(original_plan)
+        current_index = plan_order.index(current_plan)
         if next_plan is None:
             next_index = 6
         else:
@@ -636,21 +655,21 @@ class RegStripe:
 
         if desired_plan == 'free':
             return 'free'
-        elif (current_plan == 'free' or current_plan == '980') and desired_plan == 'try':
+        elif (current_plan == 'free' or current_plan == '980') and desired_plan == 'try': # フリー・初級からトライアルへは移行可能
             return 'start_trial'
-        elif desired_plan == 'try' and current_index > desired_index:
+        elif desired_plan == 'try' and original_index > 3: # 中上級プランからトライアルへ移行不可
             return 'invalid_trial'
-        elif desired_index == current_index:
+        elif desired_index == original_index or current_index == desired_index: # 同じプランに変更不可
             return 'already_subscribed'
-        elif desired_plan == next_plan:
+        elif desired_plan == next_plan: # 予約済みプランに変更不可
             return 'already_resv'
-        elif next_plan != 'free' and current_index > next_index:
+        elif next_plan != 'free' and original_index > next_index: # ダウングレード予約済み
             return 'downgrade_resv'
-        elif (original_plan == 'free' or original_plan == 'try') and desired_plan in ['980', '1980', '3980']:
+        elif (original_plan == 'free' or original_plan == 'try') and desired_plan in ['980', '1980', '3980']: # 新規登録
             return 'new_subscription'
-        elif current_index < desired_index:
+        elif original_index < desired_index: # アップグレード
             return 'upgrade'
-        elif current_index > desired_index:
+        elif original_index > desired_index: # ダウングレード
             return 'downgrade'
         else:
             return 'already_subscribed'
@@ -658,7 +677,7 @@ class RegStripe:
     def start_trial(self,action,desired_plan,isTrialValid):
         if isTrialValid:
             fa.set_pending_action(db, self.userId, {'action': action, 'desired_plan': desired_plan})
-            return ["【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、中級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください\n(モード切替や「はい」以外の返信でキャンセルします)"]
+            return ["【ご確認】\n3日間の無料トライアルを開始しますか？","※※※※※※※※※※※※※※※※※※※※※※\n\n・無料トライアル期間は3日間です\n\n・トライアル中は、上級プランと同様の機能がお使いいただけます\n\n・トライアル終了後は、もとのプランに戻ります\n\n※※※※※※※※※※※※※※※※※※※※※※","よろしければ「はい」と返信してください\n(モード切替や「はい」以外の返信でキャンセルします)"]
         else:
             return ['トライアル期間が終了しています']
 
@@ -702,7 +721,7 @@ class messageText:
             return ['チャット機能をご利用いただくには、無料トライアルか有料プランへのご契約が必要です', 'メニューから「プランの変更・契約」をタップしてご確認ください']
         if currentPlan == '980':
             return self.processBegin(botType)
-        elif currentPlan == 'try' or currentPlan == '1980':
+        elif currentPlan == '1980':
             return self.processMiddle(botType)
         elif currentPlan == 'try' or currentPlan == '3980':
             return self.processHigh(botType)
@@ -931,21 +950,25 @@ class messageText:
             
             return ["ありがとうございます。\n次に、お客様が現在ご加入されている保険会社名と保険商品名、月々の保険料を教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
         except Exception as e:
+            print(f"Error in process_insured_info: {str(e)}")
             return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
 
     def extract_insurance_info(self):
         """保険会社名、保険商品名、保険料を抽出する共通関数"""
         try:
+            print("userText:",self.userText)
             # 保険料を抽出（数字と単位「円」を含む部分を探す）
             premium_match = re.search(r'(\d{1,3}(,\d{3})*|\d+)\s*円', self.userText)
             premium = premium_match.group(1) if premium_match else None
+            print("premium:",premium)
 
             if not premium:
                 return None, None, None
 
             # AIウェブサーチで保険会社と商品名を調査
             search_prompt = gp.get_insurance_search_prompt(self.userText)
-            search_result = oa.openai_chat("gpt-4o-search-preview", search_prompt)
+            search_result = oa.openai_search("gpt-4o-search-preview", search_prompt, context_size="high")
+            print("search_result:",search_result)
 
             # 検索結果から情報を抽出
             company_match = re.search(r'<company_name>\s*(.*?)\s*</company_name>', search_result, re.DOTALL)
@@ -953,6 +976,8 @@ class messageText:
 
             company_name = company_match.group(1) if company_match else None
             product_name = product_match.group(1) if product_match else None
+            print("company_name:",company_name)
+            print("product_name:",product_name)
 
             if company_name == 'None' or product_name == 'None':
                 return None, None, None
@@ -966,7 +991,7 @@ class messageText:
         """現在の保険情報を処理する関数"""
         try:
             # 共通関数を使用して保険情報を抽出
-            company_name, product_name, premium = self.extract_insurance_info(self.userText)
+            company_name, product_name, premium = self.extract_insurance_info()
 
             if not company_name or not product_name or not premium:
                 return ["申し訳ありません。入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
@@ -998,7 +1023,7 @@ class messageText:
         """乗り換え先の保険情報を処理する関数"""
         try:
             # 共通関数を使用して保険情報を抽出
-            company_name, product_name, premium = self.extract_insurance_info(self.userText)
+            company_name, product_name, premium = self.extract_insurance_info()
 
             if not company_name or not product_name or not premium:
                 return ["入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
@@ -1029,35 +1054,45 @@ class messageText:
     def process_search_insurance(self):
         """保険商品検索を実行する関数"""
         if self.userText == 'はい':
-            return self.excute_search_insurance(self.userId,self.userData)
+            return self.excute_search_insurance()
         else:
-            return self.cancel_search_insurance(self.userId)
+            return self.cancel_search_insurance()
 
     def excute_search_insurance(self):
         """保険商品を検索する関数"""
         try:
             # 現在の保険情報の処理
             current_insurance = self.userData.get('insurance_current_insurance')
+            print("1048 current_insurance:",current_insurance)
             current_result = self.search_insurance_info(current_insurance)
+            print("1050 current_result:",current_result)
 
             message = ["保険商品の情報を取得しました！："]
             if current_result:
                 content = current_result['content']
                 current_insurance_info = {
-                    'content': content,
+                    'content': current_result.get('content', None),
+                    'company_name': current_result.get('company', None),
+                    'insurance_name': current_result.get('insurance_name', None),
+                    'premium': current_insurance.get('premium', None)
                 }
-                text = [f"【現在の保険商品の情報】\n{content}\n\n"]
+                text = f"【現在の保険商品の情報】\n{content}\n\n"
                 message.append(text)
             # 目標の保険情報の処理
             target_insurance = self.userData.get('insurance_target_insurance')
+            print("1053 target_insurance:",target_insurance)
             target_result = self.search_insurance_info(target_insurance)
+            print("1161 target_result:",target_result)
             
             if target_result:
                 content = target_result['content']
                 target_insurance_info = {
-                    'content': content,
+                    'content': target_result.get('content', None),
+                    'company_name': target_result.get('company', None),
+                    'insurance_name': target_result.get('insurance_name', None),
+                    'premium': target_insurance.get('premium', None)
                 }
-                text = [f"【提案先の保険商品の情報】\n{content}"]
+                text = f"【提案先の保険商品の情報】\n{content}"
                 message.append(text)
 
             if not all([current_result, target_insurance]):
@@ -1070,6 +1105,7 @@ class messageText:
                 target_insurance_info=target_insurance_info
             )
             message.append("この情報をもとに、乗り換え提案トークを作成できます。\n\n実行しますか？\n\n「はい」か「いいえ」で回答してください")
+            print("1081 message:",message)
             return message
         except Exception as e:
             logging.error(f"Error in excute_search_insurance: {str(e)}")
@@ -1092,30 +1128,34 @@ class messageText:
             
         search_text = f"{insurance_data['company_name']}の{insurance_data['product_name']}"
         vector = oa.embedding([search_text])[0]
-        search_results = fa.get_insurance_info(db, vector, 5)
+        search_results = fa.get_insurance_info(db, vector, 10)
+        print("search_results:",search_results)
         
         # 検索結果のテキスト化（番号付き）
         search_text_numbered = "\n".join([
-            f"{i}. {result['company']}の{result['insurance_name']}" 
+            f"{i}. {result['company']}の{result['insurance_name']}\n説明: {result['content'][:50]}..." 
             for i, result in enumerate(search_results, 1)
         ])
         
         # AI による検証
         verify_prompt = gp.get_insurance_verification_prompt(search_text_numbered, search_text)
         verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+        print("1116 verification_response:",verification_response)
         
         if verification_response:
             match = re.search(r'<result_number>\s*(\d+|None)\s*</result_number>', verification_response)
+            print("1120 match:",match)
             if match:
                 result_number = match.group(1)
+                print("1123 result_number:",result_number)
                 if result_number != "None":
                     # 選択された保険情報を取得
                     selected_insurance = search_results[int(result_number) - 1]
-                    
+                    print("1127 selected_insurance:",selected_insurance)
                     # contentの内容を評価
                     content_verify_prompt = gp.get_insurance_content_verification_prompt(selected_insurance['content'])
                     content_verification = oa.openai_chat("gpt-4o", content_verify_prompt)
-                    
+                    print("1131 content_verification:",content_verification)
                     # 内容が十分な場合は選択された保険情報を返す
                     if content_verification and 'true' in content_verification.lower():
                         return selected_insurance
@@ -1148,10 +1188,12 @@ class messageText:
             prompt = f"{search_prompt}\n\n保険会社名: {company_name}\n保険商品名: {product_name}"
 
             # AIによる詳細情報の収集
-            response = oa.openai_chat(
+            response = oa.openai_search(
                 openai_model="gpt-4o-search-preview",
-                prompt=prompt
+                prompt=prompt,
+                context_size="high"
             )
+            print("1169 response:",response)
             
             if not response:
                 raise ValueError("Failed to get response from AI search")
@@ -1164,6 +1206,7 @@ class messageText:
                 raise ValueError("Failed to extract product details from response")
 
             content = response[content_start + len("<product_details>"):content_end].strip()
+            print("1182 content:",content)
 
             if not content:
                 raise ValueError("Empty content extracted from response")
@@ -1174,10 +1217,11 @@ class messageText:
                 "insurance_name": product_name,
                 "content": content,
             }
-
+            print("1187 insurance_info:",insurance_info)
             # 保険情報DBエンドポイントへ送信
             try:
                 response = requests.post(INSURANCE_DB_URL + "/insurance", json=insurance_info)
+                print("1195 response:",response)
                 return insurance_info
             
             except Exception as e:
@@ -1200,9 +1244,9 @@ class messageText:
     def process_create_proposal(self):
         """保険乗り換えトークを生成する関数"""
         if self.userText == 'はい':
-            return self.create_proposal(self.userId,self.userData)
+            return self.create_proposal()
         else:
-            return self.cancel_proposal(self.userId)
+            return self.cancel_proposal()
 
     def create_proposal(self):
         """保険乗り換えトークを生成する関数"""
@@ -1341,7 +1385,7 @@ class messageText:
             if isNotRelated:
                 # AIによる話題生成（ネット検索モデルを使用）
                 generate_prompt = gp.get_talk_topic_generation_prompt(self.userText)
-                generated_response = oa.openai_chat("gpt-4o-search-preview", generate_prompt)
+                generated_response = oa.openai_search("gpt-4o-search-preview", generate_prompt, context_size="medium")
                 
                 if not generated_response:
                     return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
@@ -1372,7 +1416,7 @@ class messageText:
                         related_articles.append({'content': content})
                 messages.append("\n\n".join(topic_list))
             
-            messages.append("\nこの内容をもとに、おすすめの保険種類と提案セリフの生成ができます。実行しますか？\n「はい」か「いいえ」で回答してください")
+            messages.append("この内容をもとに、おすすめの保険種類と提案セリフの生成ができます。実行しますか？\n「はい」か「いいえ」で回答してください")
             
             # Firestoreに個人情報と関連記事を保存
             fa.update_talk_state(db, self.userId, 
@@ -1390,9 +1434,9 @@ class messageText:
     def process_mapping_proposal(self):
         """トークモードでの保険提案マッピングを処理する関数"""
         if self.userText == 'はい':
-            return self.create_mapping_proposal(self.userId,self.userData)
+            return self.create_mapping_proposal()
         else: # mesText == 'いいえ'
-            return self.cancel_mapping_proposal(self.userId)
+            return self.cancel_mapping_proposal()
         
     def create_mapping_proposal(self):
         """
@@ -1456,14 +1500,14 @@ class messageText:
             messages = ["生成が完了しました！："]
             mapping_text = []
             for i, mapping in enumerate(talk_mappings, 1):
-                message = f"\n{i}. {mapping['title']}\n"
+                message = f"{i}. {mapping['title']}\n"
                 message += f"・おすすめの保険種類：{mapping['insurance_category']}\n"
                 message += f"・ニーズ喚起セリフ：{mapping['needs_question']}\n"
-                message += f"・切込みセリフ：{mapping['hook_phrase']}\n"
+                message += f"・切込みセリフ：{mapping['hook_phrase']}\n\n"
                 mapping_text.append(message)
             messages.append("\n".join(mapping_text))
                 
-            messages.append("\nこの内容で、さらに保険提案トークを想定できます。実行しますか？\n「はい」か「いいえ」で回答してください")
+            messages.append("この内容で、さらに保険提案トークを想定できます。実行しますか？\n「はい」か「いいえ」で回答してください")
             
             return messages
             
@@ -1485,9 +1529,9 @@ class messageText:
     def process_talk_proposal(self):
         """トークモードでの保険提案トークを処理する関数"""
         if self.userText == 'はい':
-            return self.create_talk_proposal(self.userId,self.userData)
+            return self.create_talk_proposal()
         else: # mesText == 'いいえ'
-            return self.cancel_talk_proposal(self.userId)
+            return self.cancel_talk_proposal()
         
     def create_talk_proposal(self):
         """
@@ -1558,7 +1602,7 @@ class messageText:
                 talk_list.append(proposal['phases'].get('needs_awareness', '会話生成に失敗しました'))
                 talk_list.append("\n# 4. 切込み提案")
                 talk_list.append(proposal['phases'].get('proposal', '会話生成に失敗しました'))
-                talk_list.append("\n" + "="*50)
+                talk_list.append("\n" + "="*23)
                 talk_text += "\n".join(talk_list)
                 talk_list = []
             messages.append(talk_text)
@@ -1571,7 +1615,7 @@ class messageText:
                 should_delete=True
                 )
             
-            messages.append("\n※AIによる提案内容は参考情報です。実際の提案時は、お客様の状況や会話内容に応じて適切にアレンジしてください。")
+            messages.append("※AIによる提案内容は参考情報です。実際の提案時は、お客様の状況や会話内容に応じて適切にアレンジしてください。")
             
             return messages
             
@@ -1603,34 +1647,45 @@ class messageText:
         history = self.userData.get('rp_history', [])
         full_history = self.userData.get('rp_full_history', [])
         if not history:
-            history_text = self.get_rphis_text(history)
-        else:
             history_text = ""
+        else:
+            history_text = self.get_rphis_text(history)
+        if not full_history:
+            full_history_text = ""
+        else:
+            full_history_text = self.get_rphis_text(full_history)
+
+        print("history_text:",history_text)
+        print("full_history_text:",full_history_text)
 
         # 会話履歴の数をチェック
         history_count = len(history)
         should_summarize = False
+        print("history_count:",history_count)
 
         # 要約が必要かどうかを判断
-        if rp_summary is None and history_count >= 5:
+        if rp_summary is None and history_count >= 10:
             should_summarize = True
-        elif rp_summary is not None and history_count >= 4:
+        elif rp_summary is not None and history_count >= 9:
             should_summarize = True
 
         if should_summarize:
             # 要約を生成
             summary_prompt = gp.get_rp_summary_prompt(history_text, rp_summary)
+            print("1650 summary_prompt:",summary_prompt)
             summary_response = oa.openai_chat("gpt-4o", summary_prompt)
+            print("1652 summary_response:",summary_response)
             
             if not summary_response:
                 return ["申し訳ありません。エラーが発生しました。もう一度お試しください"]
             
             # 要約文を抽出
-            summary_match = re.search(r'<summary>(.*?)</summary>', summary_response, re.DOTALL)
+            summary_match = re.search(r'<information>(.*?)</information>', summary_response, re.DOTALL)
             if not summary_match:
                 return ["申し訳ありません。エラーが発生しました。もう一度お試しください"]
             
             new_summary = summary_match.group(1).strip()
+            print("new_summary:",new_summary)
             
             # 会話履歴をリセットし、要約文を保存
             fa.reset_rp_history(db, self.userId, isResetHistory=True)
@@ -1642,7 +1697,9 @@ class messageText:
 
         # 保険提案の切込みかどうかを判定
         detection_prompt = gp.get_proposal_detection_prompt(history_text, self.userText, rp_summary)
+        print("1674 detection_prompt:",detection_prompt)
         detection_response = oa.openai_chat("gpt-4o", detection_prompt)
+        print("1676 detection_response:",detection_response)
         
         if not detection_response:
             return ["応答の取得に失敗しました。再度、テキストを送信してください"]
@@ -1654,8 +1711,10 @@ class messageText:
         
         if is_proposal_match.group(1).lower() == 'true':
             # 保険提案の受諾判定を実行
-            acceptance_prompt = gp.get_proposal_acceptance_prompt(rp_setting, full_history)
+            acceptance_prompt = gp.get_proposal_acceptance_prompt(rp_setting, full_history_text)
+            print("1688 acceptance_prompt:",acceptance_prompt)
             acceptance_response = oa.openai_chat("gpt-4o", acceptance_prompt)
+            print("1691 acceptance_response:",acceptance_response)
             
             if not acceptance_response:
                 return ["応答の取得に失敗しました。再度、テキストを送信してください"]
@@ -1668,8 +1727,9 @@ class messageText:
                 return ["応答の取得に失敗しました。再度、テキストを送信してください"]
             
             analysis = analysis_match.group(1).strip()
+            print("1706 analysis:",analysis)
             reaction = reaction_match.group(1).strip()
-            
+            print("1708 reaction:",reaction)
             # 会話履歴を更新
             fa.update_rp_history(db, self.userId, rp_data_limit, salesperson=self.userText, customer=reaction)
             return [reaction]
@@ -1678,6 +1738,7 @@ class messageText:
             # 通常の会話処理
             prompt = gp.get_rp_prompt(rp_setting, history_text, self.userText, rp_summary)
             res = oa.openai_chat("gpt-4o", prompt)
+            print("保険提案res:",res)
 
             if not res:
                 return ["応答の取得に失敗しました。再度、テキストを送信してください"]
