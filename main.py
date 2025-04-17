@@ -1293,28 +1293,28 @@ class messageText:
                 
                 # 提案内容を整形
                 formatted_proposal = [
-                    "乗り換え提案の作成が完了しました！：",
-                    "【1. 各保険の特徴解説】\n" + proposal_sections['特徴解説'],
-                    "【2. 各保険のメリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析'],
-                    "【3. 各保険の評価】\n" + proposal_sections['評価'],
-                    "【4. 提案方法】\n" + proposal_sections['提案方法'],
-                    "【5. 総評と反論】\n" + proposal_sections['総評と反論'],
-                    "※AIによる提案内容は参考情報です。\n\n提案はお客様の状況や会話内容に応じて、適切にアレンジしてください。\n\nまた、実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。"
+                    "乗り換え提案の作成が完了しました！",
+                    "【1. 各保険の特徴解説】\n" + proposal_sections['特徴解説']
+                    + "\n\n【2. 各保険のメリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析']
+                    + "\n\n【3. 各保険の評価】\n" + proposal_sections['評価']
+                    + "\n\n【4. 提案方法】\n" + proposal_sections['提案方法']
+                    + "\n\n【5. 総評と反論】\n" + proposal_sections['総評と反論'],
+                    "※AIによる提案内容は参考情報です。\n\n提案はお客様の状況や会話内容に応じて、適切にアレンジしてください。\n\nまた、実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。",
+
                 ]
+                proposal_text = "\n".join(formatted_proposal)
                 
-                # 状態をリセット
+                # 状態を更新
                 fa.update_insurance_state(
                     db, 
                     self.userId, 
-                    transfer_status=6, # 提案完了
-                    should_delete=True)
+                    transfer_status=6,
+                    proposal_text=proposal_text,
+                )
                 
-                # 提案内容を直接送信（replyTokenは有効期限が短いためpush_messageを使用）
                 logging.info(f"Sending insurance proposal to user: {self.userId}")
-                la.push_message(LINE_ACCESS_TOKEN, self.userId, formatted_proposal)
-                
-                # 空のリストを返して、event_messageの外側で二重送信しないようにする
-                return []
+
+                return formatted_proposal
                     
             # 提案作成に失敗した場合はエラーメッセージを表示
             error_message = ["申し訳ありません。提案の作成に失敗しました。\n\n再実行しますか？「はい」か「いいえ」で回答してください"]
@@ -1327,7 +1327,7 @@ class messageText:
             error_message = ["申し訳ありません。エラーが発生しました。\n\n再実行しますか？「はい」か「いいえ」で回答してください"]
             la.push_message(LINE_ACCESS_TOKEN, self.userId, error_message)
             return []
-
+        
     def cancel_proposal(self):
         """保険商品の乗り換え提案をキャンセルし、初期状態に戻す関数"""
         # transfer_statusを1に設定し、保険情報を削除
@@ -1337,6 +1337,63 @@ class messageText:
             "乗り換え提案トークの作成をキャンセルしました。",
             "はじめから乗り換え提案の生成をやり直す場合は、想定されるお客様の年齢と性別を教えてください。詳しいほど、より正確な情報をご提供できます。\n\nまた、その他の補足情報があれば教えてください",
             "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者　など"
+        ]
+
+    def process_summary_proposal(self):
+        """保険乗り換えトークの要約を生成する関数"""
+        if self.userText == 'はい':
+            return self.create_summary_proposal()
+        else:
+            return self.cancel_summary_proposal()
+
+    def create_summary_proposal(self):
+        """保険乗り換えトークの要約を生成する関数"""
+        try:
+            proposal_text = self.userData.get('proposal_text')
+            if not proposal_text:
+                return ["申し訳ありません。提案内容の取得に失敗しました"]
+        
+            # 提案内容を要約するプロンプトを作成
+            summary_prompt = gp.get_insurance_summary_proposal_prompt(proposal_text)
+
+            # AIによる要約生成
+            summary_response = oa.openai_chat("gpt-4o", summary_prompt)
+
+            if not summary_response:
+                return ["申し訳ありません。要約の生成に失敗しました。\n\n再実行しますか？「はい」か「いいえ」で回答してください"]
+            
+            # 要約内容を整形
+            summary_text = re.search(r'<summary>(.*?)</summary>', summary_response, re.DOTALL)
+            if not summary_text:
+                return ["申し訳ありません。要約の抽出に失敗しました。\n\n再実行しますか？「はい」か「いいえ」で回答してください"]
+            
+            summary = summary_text.group(1).strip()
+
+            # 状態を更新
+            fa.update_insurance_state(
+                db, 
+                self.userId, 
+                transfer_status=7,
+                should_delete=True
+            )
+            
+            return [
+                "保険乗り換えトークの要約が完了しました！",
+                "要約内容：\n" + summary,
+                "※AIによる提案内容は参考情報です。\n\n提案はお客様の状況や会話内容に応じて、適切にアレンジしてください。\n\nまた、実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。"
+            ]
+        
+        except Exception as e:
+            logging.error(f"Error in create_summary_proposal: {str(e)}")
+            return ["申し訳ありません。エラーが発生しました。\n\n再実行しますか？「はい」か「いいえ」で回答してください"]
+    
+    def cancel_summary_proposal(self):
+        """保険乗り換えトークの要約をキャンセルし、初期状態に戻す関数"""
+        # transfer_statusを1に設定し、保険情報を削除
+        fa.update_insurance_state(db, self.userId, transfer_status=7, should_delete=True)
+        
+        return [
+            "乗り換え提案トークの要約をキャンセルしました。"
         ]
 
     def process_talk_info(self):

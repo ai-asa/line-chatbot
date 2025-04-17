@@ -203,6 +203,7 @@ class FirestoreAdapter:
             'talk_mappings': None,  # トークモードでのマッピング情報を保存するフィールド
             'current_insurance_info': None, # 乗り換えモードでの現在の保険情報を保存するフィールド
             'target_insurance_info': None, # 乗り換えモードでの提案先の保険情報を保存するフィールド
+            'proposal_text': None, # 乗り換えモードでの提案内容を保存するフィールド
         }
 
     def get_user_data(self, db, user_id, data_limit, rp_data_limit):
@@ -458,7 +459,7 @@ class FirestoreAdapter:
         messages = [snapshot.to_dict() for snapshot in snapshots]
         return messages
 
-    def update_insurance_state(self, db, user_id: str, transfer_status: int = None, info_type: str = None, info_data: dict = None, current_insurance_info: dict = None, target_insurance_info: dict = None, should_delete: bool = False):
+    def update_insurance_state(self, db, user_id: str, transfer_status: int = None, info_type: str = None, info_data: dict = None, current_insurance_info: dict = None, target_insurance_info: dict = None, should_delete: bool = False, proposal_text: str = None):
         """保険関連の状態と情報を一括で更新する関数
         
         Args:
@@ -471,7 +472,8 @@ class FirestoreAdapter:
                 3: 乗り換え先の保険商品名と値段を質問中
                 4: 保険商品の情報を収集
                 5: 乗り換え提案を作成
-                6: 提案が完了した状態
+                6: 要約を提案している状態
+                7: 提案が完了した状態
             info_type (str, optional): 情報の種類 ('insured_info' | 'current_insurance' | 'target_insurance')
             info_data (dict, optional): 保存するデータ
             current_insurance_info (dict, optional): 現在の保険情報
@@ -497,6 +499,9 @@ class FirestoreAdapter:
 
         if target_insurance_info is not None:
             update_data['insurance_target_insurance'] = target_insurance_info
+        
+        if proposal_text is not None:
+            update_data['proposal_text'] = proposal_text
 
         # 保険情報の削除
         if should_delete:
