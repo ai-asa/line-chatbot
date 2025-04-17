@@ -430,9 +430,9 @@ def event_postback(event,replyToken,userId,user_data):
     isRetryRP = user_data['isRetryRP']
     transfer_status = user_data.get('transfer_status', 0)
     talk_status = user_data.get('talk_status', 0)
-    if 1 <= transfer_status <= 4:
+    if 1 <= transfer_status <= 7:
         fa.update_insurance_state(db, userId, transfer_status=0, should_delete=True)
-    elif 1 <= talk_status <= 6:
+    elif 1 <= talk_status <= 5:
         fa.update_talk_state(db, userId, talk_status=0, should_delete=True)
     elif pending_action:
         text = cancel_update_sub(userId)
@@ -938,6 +938,8 @@ class messageText:
         elif talk_status == 3:
             return self.process_talk_proposal()
         elif talk_status == 4:
+            return self.process_talk_summary_proposal()
+        elif talk_status == 5:
             return ["提案が終了しました。\n\n新たな条件で提案を作成する場合は再度、メニュー「話しかけ方」ボタンをタップしてください"]
 
     def process_insured_info(self):
@@ -1311,6 +1313,7 @@ class messageText:
                     transfer_status=6,
                     proposal_text=proposal_text,
                 )
+                formatted_proposal.append("この提案を要約しますか？\n「はい」か「いいえ」で回答してください")
                 
                 logging.info(f"Sending insurance proposal to user: {self.userId}")
 
@@ -1647,7 +1650,7 @@ class messageText:
                 return ["申し訳ありません。生成に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
             
             # レスポンスメッセージを生成
-            messages = ["保険提案トークの生成が完了しました！："]
+            messages = ["保険提案トークの生成が完了しました！"]
             
             talk_list = []
             talk_text = ""
@@ -1665,17 +1668,18 @@ class messageText:
                 talk_text += "\n".join(talk_list)
                 talk_list = []
             messages.append(talk_text)
-            
-            # トークモードの状態を更新（完了状態に）
+
+            # 状態を更新
             fa.update_talk_state(
                 db, 
                 self.userId, 
-                talk_status=4, # 提案が完了した状態
-                should_delete=True
+                talk_status=4, # 要約を提案している状態
+                talk_text=talk_text
                 )
             
             messages.append("※AIによる提案内容は参考情報です。実際の提案時は、お客様の状況や会話内容に応じて適切にアレンジしてください。")
-            
+            messages.append("この提案を要約しますか？\n「はい」か「いいえ」で回答してください")
+
             return messages
             
         except Exception as e:
@@ -1692,7 +1696,57 @@ class messageText:
             "例：\n年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都　など"
         ]
 
-
+    def process_talk_summary_proposal(self):
+        """トークモードでの保険提案トークの要約を処理する関数"""
+        if self.userText == 'はい':
+            return self.create_talk_summary_proposal()
+        else: # mesText == 'いいえ'
+            return self.cancel_talk_summary_proposal()
+    
+    def create_talk_summary_proposal(self):
+        """トークモードでの保険提案トークの要約を生成する関数"""
+        try:
+            talk_text = self.userData.get('talk_text')
+            if not talk_text:
+                return ["申し訳ありません。提案内容の取得に失敗しました"]
+        
+            summary_prompt = gp.get_talk_summary_proposal_prompt(talk_text)
+            summary_response = oa.openai_chat("gpt-4o", summary_prompt)
+            
+            if not summary_response:
+                return ["申し訳ありません。要約の生成に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+            
+            summary_match = re.search(r'<summary>(.*?)</summary>', summary_response, re.DOTALL)
+            if not summary_match:
+                return ["申し訳ありません。要約の抽出に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+            
+            new_summary = summary_match.group(1).strip()
+            
+            # 状態を更新
+            fa.update_talk_state(
+                db, 
+                self.userId, 
+                talk_status=5, # 提案が完了した状態
+                should_delete=True
+                )
+            
+            return [
+                "保険提案トークの要約が完了しました！",
+                "要約内容：\n" + new_summary
+            ]
+        
+        except Exception as e:
+            logging.error(f"Error in create_talk_summary_proposal: {str(e)}")
+            return ["申し訳ありません。エラーが発生しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+        
+    def cancel_talk_summary_proposal(self):
+        """トークモードでの保険提案トークの要約をキャンセルする関数"""
+        fa.update_talk_state(db, self.userId, talk_status=5, should_delete=True)
+        
+        return [
+            "保険提案トークの要約をキャンセルしました"
+        ]
+    
     def res_rp(self):
         if self.userData['isAlreadyRP']:
             return self._process_rp()

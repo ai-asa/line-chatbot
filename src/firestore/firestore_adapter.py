@@ -204,6 +204,7 @@ class FirestoreAdapter:
             'current_insurance_info': None, # 乗り換えモードでの現在の保険情報を保存するフィールド
             'target_insurance_info': None, # 乗り換えモードでの提案先の保険情報を保存するフィールド
             'proposal_text': None, # 乗り換えモードでの提案内容を保存するフィールド
+            'talk_text': None, # トークモードでの提案内容を保存するフィールド
         }
 
     def get_user_data(self, db, user_id, data_limit, rp_data_limit):
@@ -588,7 +589,7 @@ class FirestoreAdapter:
         # ベクトル検索が指定されていない場合は、単純にlimit件を返す
         return all_insurance_info[:limit]
 
-    def update_talk_state(self, db, user_id: str, talk_status: int = None, personal_info: str = None, related_articles: list = None, talk_mappings: list = None, should_delete: bool = False):
+    def update_talk_state(self, db, user_id: str, talk_status: int = None, personal_info: str = None, related_articles: list = None, talk_mappings: list = None, talk_text: str = None, should_delete: bool = False):
         """トークモードの状態と情報を一括で更新する関数
         
         Args:
@@ -599,7 +600,8 @@ class FirestoreAdapter:
                 1: 個人情報を質問中/関連時事ネタの提供/続行確認
                 2: マッピング作成/続行確認
                 3: トーク生成中/続行確認
-                4: 提案が完了した状態
+                4: 要約を提案している状態
+                5: 提案が完了した状態
             personal_info (str, optional): 顧客個人情報
             related_articles (list, optional): 関連記事のリスト
             talk_mappings (list, optional): 保険提案トークのマッピングリスト
@@ -626,6 +628,10 @@ class FirestoreAdapter:
         # トークマッピングの更新
         if talk_mappings is not None and not should_delete:
             update_data['talk_mappings'] = talk_mappings
+
+        # トークテキストの更新
+        if talk_text is not None and not should_delete:
+            update_data['talk_text'] = talk_text
 
         # トーク情報の削除
         if should_delete:
