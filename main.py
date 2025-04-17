@@ -924,6 +924,8 @@ class messageText:
         elif transfer_status == 5:
             return self.process_create_proposal()
         elif transfer_status == 6:
+            return self.process_summary_proposal()
+        elif transfer_status ==7:
             return ["提案が終了しました。\n\n新たな条件で提案を作成する場合は再度、メニュー「乗換の提案」ボタンをタップしてください"]
     
     def res_ta(self):
@@ -1042,7 +1044,7 @@ class messageText:
             # リプライメッセージを作成
             messages = [
                 f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}\n・保険料：{premium}円",
-                "次に、これらの保険商品の情報を収集します。これには1分程度かかる場合がございます。\n\n実行してもよろしいでしょうか？\n\n「はい」か「いいえ」で回答してください"
+                "次に、これらの保険商品の情報を収集します","これには ※1分程度かかる※ 場合がございます。\n\n実行してもよろしいでしょうか？\n\n「はい」か「いいえ」で回答してください"
             ]
             
             return messages
