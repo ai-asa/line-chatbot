@@ -572,7 +572,7 @@ def rpr_text(userId,user_data):
     rp_full_history_text = get_text(rp_full_history)
     rp_setting = user_data['rp_setting']
 
-    res = oa.openai_chat("gpt-4o",gp.get_rpr_prompt(rp_setting,rp_full_history_text))
+    res = oa.openai_chat("gpt-4.1",gp.get_rpr_prompt(rp_setting,rp_full_history_text))
     response = re.search(r'<output_format>(.*?)</output_format>', res, re.DOTALL)
     if not response:
         return ["評価の取得に失敗しました。再度、メニューから「終了＆フィードバック」を選択してください"]
@@ -773,7 +773,7 @@ class messageText:
             return ['エラー：無効なモードを指定しています。別のモードを選択してください']
 
     def res_kn(self):
-        query_type = self.norm_query_type(oa.openai_chat("gpt-4o-mini",gp.kn_class_prompt(self.userText)))
+        query_type = self.norm_query_type(oa.openai_chat("gpt-4.1-mini",gp.kn_class_prompt(self.userText)))
         if query_type == None:
             return self.res_invalid_query()
         else:
@@ -792,7 +792,7 @@ class messageText:
         return ["無効な質問です。質問内容を変えてもう一度送信してください"]
 
     def res_valid_query(self,query_type):
-        cont  = self.norm_res_cont(oa.openai_chat("gpt-4o",gp.kl_response_prompt(query_type,self.userText)))
+        cont  = self.norm_res_cont(oa.openai_chat("gpt-4.1",gp.kl_response_prompt(query_type,self.userText)))
         if cont is not None:
             cont = [cont]
             # perse_cont = [line for line in cont.split('\n') if line]
@@ -815,7 +815,7 @@ class messageText:
             qa_text = "Q." + q + "\nA." + a
         else:
             qa_text = ["ユーザーの質問に関連するQA情報はありません"]
-        res = self.norm_answer_cont(oa.openai_chat("gpt-4o",gp.get_qa_prompt(self.userText,qa_text)))
+        res = self.norm_answer_cont(oa.openai_chat("gpt-4.1",gp.get_qa_prompt(self.userText,qa_text)))
         if res is not None:
             res = [res]
             # perse_res = [line for line in res.split('\n') if line]
@@ -834,7 +834,7 @@ class messageText:
 
     def res_yo(self):
         prompt = gp.get_searchYoutube_prompt(self.userText)
-        searchTerms = self.norm_term_cont(oa.openai_chat("gpt-4o-mini",prompt))
+        searchTerms = self.norm_term_cont(oa.openai_chat("gpt-4.1-mini",prompt))
         if not searchTerms:
             res = ["検索ワードの生成に失敗しました。再度、ご要望をお伝えください"]
             return res
@@ -845,7 +845,7 @@ class messageText:
             return res
         
         # キューの内容に最も適切な検索結果を判断
-        videoNum = self.norm_video_num(oa.openai_chat("gpt-4o-mini",gp.get_judg_prompt(self.userText, textResult)))
+        videoNum = self.norm_video_num(oa.openai_chat("gpt-4.1-mini",gp.get_judg_prompt(self.userText, textResult)))
         if not videoNum:
             res = ["YouTube動画検索に失敗しました。再度、ご要望をお伝えください"]
             return res
@@ -884,7 +884,7 @@ class messageText:
         convs = self.get_convs_text(self.userData['conversations'])
         prompt = gp.get_gs_prompt(convs,self.userText)
         print("prompt:",prompt)
-        res = self.norm_gs_res(oa.openai_chat("gpt-4o",prompt))
+        res = self.norm_gs_res(oa.openai_chat("gpt-4.1",prompt))
         if res:
             # 会話履歴を更新する
             fa.update_history(db,self.userId,data_limit,user=self.userText,assistant=res)
@@ -1143,7 +1143,7 @@ class messageText:
         
         # AI による検証
         verify_prompt = gp.get_insurance_verification_prompt(search_text_numbered, search_text)
-        verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+        verification_response = oa.openai_chat("gpt-4.1", verify_prompt)
         print("1116 verification_response:",verification_response)
         
         if verification_response:
@@ -1158,7 +1158,7 @@ class messageText:
                     print("1127 selected_insurance:",selected_insurance)
                     # contentの内容を評価
                     content_verify_prompt = gp.get_insurance_content_verification_prompt(selected_insurance['content'])
-                    content_verification = oa.openai_chat("gpt-4o", content_verify_prompt)
+                    content_verification = oa.openai_chat("gpt-4.1", content_verify_prompt)
                     print("1131 content_verification:",content_verification)
                     # 内容が十分な場合は選択された保険情報を返す
                     if content_verification and 'true' in content_verification.lower():
@@ -1273,7 +1273,7 @@ class messageText:
             )
             
             # 提案の生成
-            proposal_response = oa.openai_chat("gpt-4o", proposal_prompt)
+            proposal_response = oa.openai_chat("gpt-4.1", proposal_prompt)
             
             if proposal_response:
                 # 各セクションを抽出
@@ -1360,7 +1360,7 @@ class messageText:
             summary_prompt = gp.get_insurance_summary_proposal_prompt(proposal_text)
 
             # AIによる要約生成
-            summary_response = oa.openai_chat("gpt-4o", summary_prompt)
+            summary_response = oa.openai_chat("gpt-4.1", summary_prompt)
 
             if not summary_response:
                 return ["申し訳ありません。要約の生成に失敗しました。\n\n再実行しますか？「はい」か「いいえ」で回答してください"]
@@ -1417,7 +1417,7 @@ class messageText:
             
             # AIによる関連性の評価
             verify_prompt = gp.get_talk_content_verification_prompt(self.userText, contents)
-            verification_response = oa.openai_chat("gpt-4o", verify_prompt)
+            verification_response = oa.openai_chat("gpt-4.1", verify_prompt)
             
             # 関連性のある記事番号を抽出
             relevant_numbers = []
@@ -1528,7 +1528,7 @@ class messageText:
                     
                 # AIによるマッピング生成
                 prompt = gp.get_talk_mapping_prompt(personal_info, content)
-                mapping_response = oa.openai_chat("gpt-4o", prompt)
+                mapping_response = oa.openai_chat("gpt-4.1", prompt)
                 
                 if not mapping_response:
                     continue
@@ -1625,7 +1625,7 @@ class messageText:
                 prompt = gp.get_talk_proposal_prompt(personal_info, content, mapping)
                 
                 # AIによる会話生成
-                conversation = oa.openai_chat("gpt-4o", prompt)
+                conversation = oa.openai_chat("gpt-4.1", prompt)
                 
                 if not conversation:
                     continue
@@ -1711,7 +1711,7 @@ class messageText:
                 return ["申し訳ありません。提案内容の取得に失敗しました"]
         
             summary_prompt = gp.get_talk_summary_proposal_prompt(talk_text)
-            summary_response = oa.openai_chat("gpt-4o", summary_prompt)
+            summary_response = oa.openai_chat("gpt-4.1", summary_prompt)
             
             if not summary_response:
                 return ["申し訳ありません。要約の生成に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
@@ -1786,7 +1786,7 @@ class messageText:
             # 要約を生成
             summary_prompt = gp.get_rp_summary_prompt(history_text, rp_summary)
             print("1650 summary_prompt:",summary_prompt)
-            summary_response = oa.openai_chat("gpt-4o", summary_prompt)
+            summary_response = oa.openai_chat("gpt-4.1", summary_prompt)
             print("1652 summary_response:",summary_response)
             
             if not summary_response:
@@ -1811,7 +1811,7 @@ class messageText:
         # 保険提案の切込みかどうかを判定
         detection_prompt = gp.get_proposal_detection_prompt(history_text, self.userText, rp_summary)
         print("1674 detection_prompt:",detection_prompt)
-        detection_response = oa.openai_chat("gpt-4o", detection_prompt)
+        detection_response = oa.openai_chat("gpt-4.1", detection_prompt)
         print("1676 detection_response:",detection_response)
         
         if not detection_response:
@@ -1826,7 +1826,7 @@ class messageText:
             # 保険提案の受諾判定を実行
             acceptance_prompt = gp.get_proposal_acceptance_prompt(rp_setting, full_history_text)
             print("1688 acceptance_prompt:",acceptance_prompt)
-            acceptance_response = oa.openai_chat("gpt-4o", acceptance_prompt)
+            acceptance_response = oa.openai_chat("gpt-4.1", acceptance_prompt)
             print("1691 acceptance_response:",acceptance_response)
             
             if not acceptance_response:
@@ -1850,7 +1850,7 @@ class messageText:
         else: # 保険提案の切込みでない場合
             # 通常の会話処理
             prompt = gp.get_rp_prompt(rp_setting, history_text, self.userText, rp_summary)
-            res = oa.openai_chat("gpt-4o", prompt)
+            res = oa.openai_chat("gpt-4.1", prompt)
             print("保険提案res:",res)
 
             if not res:
@@ -1871,7 +1871,7 @@ class messageText:
 # if __name__ == "__main__":
 #     userText = "猫の動画を調べてください"
 #     prompt = gp.get_searchYoutube_prompt(userText)
-#     response = oa.openai_chat("gpt-4o-mini",prompt)
+#     response = oa.openai_chat("gpt-4.1-mini",prompt)
 #     print("searchYoutubeResponse:",response)
 #     searchTerms = extract_searchTerm_content(response)
 #     if not searchTerms:
@@ -1882,7 +1882,7 @@ class messageText:
 #         text = "YouTube動画検索に失敗しました。再度、ご要望をお伝えください"
 #     # キューの内容に最も適切な検索結果を判断
 #     prompt = gp.get_judg_prompt(userText, textResult)
-#     response = oa.openai_chat("gpt-4o-mini",prompt)
+#     response = oa.openai_chat("gpt-4.1-mini",prompt)
 #     print("judgeResponse:",response)
 #     videoNum = extract_video_numbers(response)
 #     if not videoNum:
