@@ -511,7 +511,8 @@ class FirestoreAdapter:
                 'insurance_current_insurance': None,
                 'insurance_target_insurance': None,
                 'current_insurance_info': None,
-                'target_insurance_info': None
+                'target_insurance_info': None,
+                'proposal_text': None
             })
 
         # データの更新（一括で実行）
@@ -638,7 +639,8 @@ class FirestoreAdapter:
             update_data.update({
                 'talk_personal_info': None,
                 'talk_related_articles': None,
-                'talk_mappings': None
+                'talk_mappings': None,
+                'talk_text': None
             })
 
         # データの更新（一括で実行）
