@@ -9,10 +9,10 @@ if __name__ == "__main__":
     # rt.delete_all_richmenus_and_aliases()
     # imagepath_list = ["./data/richmenu/images/リッチメニュー_ファイナルv1.png","./data/richmenu/images/リッチメニュー_ファイナルv2.png"]
     # rt.gen_richmenu(imagepath_list)
-    rt.change_richmenu_default(1,"richmenu-5631d916afd59291443bea36844af3a0")
+    rt.change_richmenu_default(1,"richmenu-6a50540d84cf90342f19b8847bd9dfe7")
     rt.get_default_richmenu()
-    rt.get_richmenu_alias("richmenu-alias-a","richmenu-5631d916afd59291443bea36844af3a0")
-    rt.get_richmenu_alias("richmenu-alias-b","richmenu-f3bdd9290c95af7d81004c3ab6a33157")
+    rt.get_richmenu_alias("richmenu-alias-a","richmenu-6a50540d84cf90342f19b8847bd9dfe7")
+    rt.get_richmenu_alias("richmenu-alias-b","richmenu-f4386da44ac029e7f272036341b2b9ba")
 
 
 # %%

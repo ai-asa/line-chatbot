@@ -5,17 +5,17 @@ import logging
 import datetime
 
 class StripeAdapter:
+    PRICE_IDS = {
+        '980': 'price_1QDau2GUmbNfqrzFFvHVvoaz',
+        '1980': 'price_1QDaxQGUmbNfqrzFniNnEiyF',
+        '3980': 'price_1RFb85GUmbNfqrzFReo445kQ'
+    }
+    # テスト用
     # PRICE_IDS = {
-    #     '980': 'price_1QDau2GUmbNfqrzFFvHVvoaz',
-    #     '1980': 'price_1QDaxQGUmbNfqrzFniNnEiyF',
+    #     '980': 'price_1QNPhlRo65d8y4fN7jsiQwmf',
+    #     '1980': 'price_1QNPhyRo65d8y4fNmYAj1ZSP',
     #     '3980': 'price_1QNPiCRo65d8y4fNwGGoKq6y'
     # }
-    # テスト用
-    PRICE_IDS = {
-        '980': 'price_1QNPhlRo65d8y4fN7jsiQwmf',
-        '1980': 'price_1QNPhyRo65d8y4fNmYAj1ZSP',
-        '3980': 'price_1QNPiCRo65d8y4fNwGGoKq6y'
-    }
 
     def __init__(self):
         stripe.api_key = os.getenv('STRIPE_API_KEY')
@@ -66,8 +66,8 @@ class StripeAdapter:
                 'quantity': 1,
             }],
             mode='subscription',
-            success_url='https://your-success-url.com/',
-            cancel_url='https://your-cancel-url.com/',
+            success_url='https://www.fox-hoken.com/zerocon-ai/',
+            cancel_url='https://www.fox-hoken.com/zerocon-ai/',
             metadata={"line_user_id": line_user_id}
         )
         return checkout_session.url
