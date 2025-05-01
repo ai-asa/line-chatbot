@@ -62,17 +62,17 @@ PLAN_NAMES = {
     'free': 'フリープラン',
     'try': 'トライアルプラン'
 }
-PRICE_IDS = {
-    'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
-    'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
-    'price_1RFb85GUmbNfqrzFReo445kQ': '3980'
-}
-# テスト用
 # PRICE_IDS = {
-#     'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
-#     'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
-#     'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
+#     'price_1QDau2GUmbNfqrzFFvHVvoaz': '980',
+#     'price_1QDaxQGUmbNfqrzFniNnEiyF': '1980',
+#     'price_1RFb85GUmbNfqrzFReo445kQ': '3980'
 # }
+# テスト用
+PRICE_IDS = {
+    'price_1QNPhlRo65d8y4fN7jsiQwmf': '980',
+    'price_1QNPhyRo65d8y4fNmYAj1ZSP': '1980',
+    'price_1QNPiCRo65d8y4fNwGGoKq6y': '3980'
+}
 PLAN_ORDER = ['free', '980', '1980', '3980']
 
 # RPの設定用の定数
@@ -1188,13 +1188,13 @@ class messageText:
                 raise ValueError("Failed to get response from AI search")
 
             # 商品詳細情報の抽出
-            content_start = response.find("<product_details>")
-            content_end = response.find("</product_details>")
+            content_start = response.find("<output>")
+            content_end = response.find("</output>")
 
             if content_start < 0 or content_end < 0:
                 raise ValueError("Failed to extract product details from response")
 
-            content = response[content_start + len("<product_details>"):content_end].strip()
+            content = response[content_start + len("<output>"):content_end].strip()
 
             if not content:
                 raise ValueError("Empty content extracted from response")
@@ -1260,9 +1260,9 @@ class messageText:
             if proposal_response:
                 # 各セクションを抽出
                 sections = {
-                    '特徴解説': re.search(r'<feature_analysis>(.*?)</feature_analysis>', proposal_response, re.DOTALL),
+                    # '特徴解説': re.search(r'<feature_analysis>(.*?)</feature_analysis>', proposal_response, re.DOTALL),
                     'メリット・デメリット分析': re.search(r'<merit_demerits>(.*?)</merit_demerits>', proposal_response, re.DOTALL),
-                    '評価': re.search(r'<evaluation_score>(.*?)</evaluation_score>', proposal_response, re.DOTALL),
+                    # '評価': re.search(r'<evaluation_score>(.*?)</evaluation_score>', proposal_response, re.DOTALL),
                     '提案方法': re.search(r'<proposal_method>(.*?)</proposal_method>', proposal_response, re.DOTALL),
                     '総評と反論': re.search(r'<overall_evaluation>(.*?)</overall_evaluation>', proposal_response, re.DOTALL)
                 }
@@ -1278,13 +1278,12 @@ class messageText:
                 # 提案内容を整形
                 formatted_proposal = [
                     "乗り換え提案の作成が完了しました！",
-                    "【1. 各保険の特徴解説】\n" + proposal_sections['特徴解説']
-                    + "\n\n【2. 各保険のメリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析']
-                    + "\n\n【3. 各保険の評価】\n" + proposal_sections['評価']
-                    + "\n\n【4. 提案方法】\n" + proposal_sections['提案方法']
-                    + "\n\n【5. 総評と反論】\n" + proposal_sections['総評と反論'],
+                    # "【1. 各保険の特徴解説】\n" + proposal_sections['特徴解説']
+                    + "\n\n【1. 各保険のメリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析']
+                    # + "\n\n【3. 各保険の評価】\n" + proposal_sections['評価']
+                    + "\n\n【2. 提案方法】\n" + proposal_sections['提案方法']
+                    + "\n\n【3. 総評と反論】\n" + proposal_sections['総評と反論'],
                     "※AIによる提案内容は参考情報です。\n\n提案はお客様の状況や会話内容に応じて、適切にアレンジしてください。\n\nまた、実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。",
-
                 ]
                 proposal_text = "\n".join(formatted_proposal)
                 

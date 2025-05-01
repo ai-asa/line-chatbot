@@ -106,8 +106,10 @@ class RichmenuController:
                         "height": 190
                     },
                     "action": {
-                        "type": "postback",
-                        "data": "rps"
+                        "type": "uri",
+                        "uri": "https://line-bot-407102.web.app/"
+                        # "type": "postback",
+                        # "data": "rps"
                     }
                 },
                 {
