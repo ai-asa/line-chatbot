@@ -1188,13 +1188,13 @@ class messageText:
                 raise ValueError("Failed to get response from AI search")
 
             # 商品詳細情報の抽出
-            content_start = response.find("<output>")
-            content_end = response.find("</output>")
+            content_start = response.find("<product_info>")
+            content_end = response.find("</product_info>")
 
             if content_start < 0 or content_end < 0:
                 raise ValueError("Failed to extract product details from response")
 
-            content = response[content_start + len("<output>"):content_end].strip()
+            content = response[content_start + len("<product_info>"):content_end].strip()
 
             if not content:
                 raise ValueError("Empty content extracted from response")
@@ -1278,13 +1278,13 @@ class messageText:
                 # 提案内容を整形
                 formatted_proposal = [
                     "乗り換え提案の作成が完了しました！",
-                    # "【1. 各保険の特徴解説】\n" + proposal_sections['特徴解説']
-                    + "\n\n【1. 各保険のメリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析']
-                    # + "\n\n【3. 各保険の評価】\n" + proposal_sections['評価']
+                    "\n\n【1. 各保険のメリット・デメリット分析】\n" + proposal_sections['メリット・デメリット分析']
                     + "\n\n【2. 提案方法】\n" + proposal_sections['提案方法']
                     + "\n\n【3. 総評と反論】\n" + proposal_sections['総評と反論'],
                     "※AIによる提案内容は参考情報です。\n\n提案はお客様の状況や会話内容に応じて、適切にアレンジしてください。\n\nまた、実際の保険商品の詳細や正確な情報は、各保険会社の公式情報をご確認ください。",
                 ]
+                # "【1. 各保険の特徴解説】\n" + proposal_sections['特徴解説']
+                # + "\n\n【3. 各保険の評価】\n" + proposal_sections['評価']
                 proposal_text = "\n".join(formatted_proposal)
                 
                 # 状態を更新
