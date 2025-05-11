@@ -954,21 +954,14 @@ class messageText:
                 info_data={'info': self.userText}
             )
             
-            return ["ありがとうございます。\n次に、お客様が現在ご加入されている保険会社名と保険商品名、月々の保険料を教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+            return ["ありがとうございます。\n次に、お客様が現在ご加入されている保険会社名と保険商品名を教えてください。\n\n例：「A生命保険、XX終身保険」"]
         except Exception as e:
             print(f"Error in process_insured_info: {str(e)}")
             return ["申し訳ありません。エラーが発生しました。再度メッセージを送信してください"]
 
     def extract_insurance_info(self):
-        """保険会社名、保険商品名、保険料を抽出する共通関数"""
+        """保険会社名、保険商品名を抽出する共通関数"""
         try:
-            # 保険料を抽出（数字と単位「円」を含む部分を探す）
-            premium_match = re.search(r'(\d{1,3}(,\d{3})*|\d+)\s*円', self.userText)
-            premium = premium_match.group(1) if premium_match else None
-
-            if not premium:
-                return None, None, None
-
             # AIウェブサーチで保険会社と商品名を調査
             search_prompt = gp.get_insurance_search_prompt(self.userText)
             search_result = oa.openai_search("gpt-4o-search-preview", search_prompt, context_size="high")
@@ -981,21 +974,21 @@ class messageText:
             product_name = product_match.group(1) if product_match else None
 
             if company_name == 'None' or product_name == 'None':
-                return None, None, None
+                return None, None
 
-            return company_name, product_name, premium
+            return company_name, product_name
         except Exception as e:
             print(f"Error in extract_insurance_info: {str(e)}")
-            return None, None, None
+            return None, None
 
     def process_current_insurance(self):
         """現在の保険情報を処理する関数"""
         try:
             # 共通関数を使用して保険情報を抽出
-            company_name, product_name, premium = self.extract_insurance_info()
+            company_name, product_name = self.extract_insurance_info()
 
-            if not company_name or not product_name or not premium:
-                return ["申し訳ありません。入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+            if not company_name or not product_name:
+                return ["申し訳ありません。入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名と保険商品名の正しい名称を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険」"]
 
             # Firestoreに保存
             fa.update_insurance_state(db, self.userId,
@@ -1003,31 +996,30 @@ class messageText:
                 info_type='current_insurance',
                 info_data={
                     'company_name': company_name,
-                    'product_name': product_name,
-                    'premium': premium
+                    'product_name': product_name
                 }
             )
             
             # リプライメッセージを作成
             messages = [
-                f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}\n・保険料：{premium}円",
-                "次に、乗り換え提案したい保険会社名と保険商品名、希望する月々の保険料を教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"
+                f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}",
+                "次に、乗り換え提案したい保険会社名と保険商品名を教えてください。\n\n例：「B生命保険、YY終身保険」"
             ]
             
             return messages
 
         except Exception as e:
             print(f"Error in process_current_insurance: {str(e)}")
-            return ["申し訳ありません。エラーが発生しました。\n再度、保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険、15,000円」"]
+            return ["申し訳ありません。エラーが発生しました。\n再度、保険会社名と保険商品名を以下の形式で教えてください。\n\n例：「A生命保険、XX終身保険」"]
 
     def process_target_insurance(self):
         """乗り換え先の保険情報を処理する関数"""
         try:
             # 共通関数を使用して保険情報を抽出
-            company_name, product_name, premium = self.extract_insurance_info()
+            company_name, product_name = self.extract_insurance_info()
 
-            if not company_name or not product_name or not premium:
-                return ["入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名、保険商品名の正しい名称と、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+            if not company_name or not product_name:
+                return ["入力形式が誤っているか、該当する保険会社名・商品名が見つかりませんでした。\n保険会社名と保険商品名の正しい名称を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険」"]
 
             # Firestoreに保存
             fa.update_insurance_state(db, self.userId,
@@ -1035,14 +1027,13 @@ class messageText:
                 info_type='target_insurance',
                 info_data={
                     'company_name': company_name,
-                    'product_name': product_name,
-                    'premium': premium
+                    'product_name': product_name
                 }
             )
             
             # リプライメッセージを作成
             messages = [
-                f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}\n・保険料：{premium}円",
+                f"ご提供いただいた情報から、以下の保険商品を特定しました：\n・保険会社：{company_name}\n・商品名：{product_name}",
                 "次に、これらの保険商品の情報を収集します","これには ※1分程度かかる※ 場合がございます。\n\n実行してもよろしいでしょうか？\n\n「はい」か「いいえ」で回答してください"
             ]
             
@@ -1050,7 +1041,7 @@ class messageText:
 
         except Exception as e:
             print(f"Error in process_target_insurance: {str(e)}")
-            return ["申し訳ありません。エラーが発生しました。\n保険会社名、保険商品名、月々の保険料を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険、12,000円」"]
+            return ["申し訳ありません。エラーが発生しました。\n保険会社名と保険商品名を以下の形式で教えてください。\n\n例：「B生命保険、YY終身保険」"]
 
     def process_search_insurance(self):
         """保険商品検索を実行する関数"""
@@ -1072,8 +1063,7 @@ class messageText:
                 current_insurance_info = {
                     'content': current_result.get('content', None),
                     'company_name': current_result.get('company', None),
-                    'insurance_name': current_result.get('insurance_name', None),
-                    'premium': current_insurance.get('premium', None)
+                    'insurance_name': current_result.get('insurance_name', None)
                 }
                 text = f"【現在の保険商品の情報】\n{content}\n\n"
                 message.append(text)
@@ -1086,8 +1076,7 @@ class messageText:
                 target_insurance_info = {
                     'content': target_result.get('content', None),
                     'company_name': target_result.get('company', None),
-                    'insurance_name': target_result.get('insurance_name', None),
-                    'premium': target_insurance.get('premium', None)
+                    'insurance_name': target_result.get('insurance_name', None)
                 }
                 text = f"【提案先の保険商品の情報】\n{content}"
                 message.append(text)
@@ -1260,9 +1249,7 @@ class messageText:
             if proposal_response:
                 # 各セクションを抽出
                 sections = {
-                    # '特徴解説': re.search(r'<feature_analysis>(.*?)</feature_analysis>', proposal_response, re.DOTALL),
                     'メリット・デメリット分析': re.search(r'<merit_demerits>(.*?)</merit_demerits>', proposal_response, re.DOTALL),
-                    # '評価': re.search(r'<evaluation_score>(.*?)</evaluation_score>', proposal_response, re.DOTALL),
                     '提案方法': re.search(r'<proposal_method>(.*?)</proposal_method>', proposal_response, re.DOTALL),
                     '総評と反論': re.search(r'<overall_evaluation>(.*?)</overall_evaluation>', proposal_response, re.DOTALL)
                 }
