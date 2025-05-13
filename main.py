@@ -535,7 +535,8 @@ def ta_text(userId):
     fa.update_talk_state(db, userId, talk_status=1)
     
     return ["【モード変更】\nゼロコンAIが保険提案トークを考えます",
-            "はじめに、想定するお客様の情報を教えてください♩\n\n--------------","年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都",
+            "はじめに、想定するお客様の情報を教えてください♩\n\n--------------",
+            "年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都",
             "--------------\n\n点線内だけをコピペして、内容を変えて送信してね(^^♪",
             "※項目は増やしてもOKです。情報が多いほど、より良い提案ができるよ！"]
 
@@ -1055,34 +1056,48 @@ class messageText:
         try:
             # 現在の保険情報の処理
             current_insurance = self.userData.get('insurance_current_insurance')
-            current_result = self.search_insurance_info(current_insurance)
+            if not current_insurance:
+                logging.error("current_insurance not found in userData")
+                return ["申し訳ありません。現在の保険情報が見つかりません。再度最初からやり直してください。"]
 
-            message = ["保険商品の情報を取得しました！："]
-            if current_result:
-                content = current_result['content']
-                current_insurance_info = {
-                    'content': current_result.get('content', None),
-                    'company_name': current_result.get('company', None),
-                    'insurance_name': current_result.get('insurance_name', None)
-                }
-                text = f"【現在の保険商品の情報】\n{content}\n\n"
-                message.append(text)
+            current_result = self.search_insurance_info(current_insurance)
+            if not current_result:
+                logging.error(f"Failed to search current insurance info: {current_insurance}")
+                return ["申し訳ありません。現在の保険商品の情報取得に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+
             # 目標の保険情報の処理
             target_insurance = self.userData.get('insurance_target_insurance')
+            if not target_insurance:
+                logging.error("target_insurance not found in userData")
+                return ["申し訳ありません。乗り換え先の保険情報が見つかりません。再度最初からやり直してください。"]
+                
             target_result = self.search_insurance_info(target_insurance)
-            
-            if target_result:
-                content = target_result['content']
-                target_insurance_info = {
-                    'content': target_result.get('content', None),
-                    'company_name': target_result.get('company', None),
-                    'insurance_name': target_result.get('insurance_name', None)
-                }
-                text = f"【提案先の保険商品の情報】\n{content}"
-                message.append(text)
+            if not target_result:
+                logging.error(f"Failed to search target insurance info: {target_insurance}")
+                return ["申し訳ありません。乗り換え先の保険商品の情報取得に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
 
-            if not all([current_result, target_insurance]):
-                return ["申し訳ありません。情報収集に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
+            # 情報の整形とFirestoreへの保存
+            message = ["保険商品の情報を取得しました！："]
+            
+            # 現在の保険情報を整形
+            content = current_result['content']
+            current_insurance_info = {
+                'content': current_result.get('content', None),
+                'company_name': current_result.get('company', None),
+                'insurance_name': current_result.get('insurance_name', None)
+            }
+            text = f"【現在の保険商品の情報】\n{content}\n\n"
+            message.append(text)
+            
+            # 目標の保険情報を整形
+            content = target_result['content']
+            target_insurance_info = {
+                'content': target_result.get('content', None),
+                'company_name': target_result.get('company', None),
+                'insurance_name': target_result.get('insurance_name', None)
+            }
+            text = f"【提案先の保険商品の情報】\n{content}"
+            message.append(text)
 
             # Firestoreの状態を更新
             fa.update_insurance_state(db, self.userId, 
@@ -1092,6 +1107,7 @@ class messageText:
             )
             message.append("この情報をもとに、乗り換え提案トークを作成できます。\n\n実行しますか？\n\n「はい」か「いいえ」で回答してください")
             return message
+            
         except Exception as e:
             logging.error(f"Error in excute_search_insurance: {str(e)}")
             return ["申し訳ありません。調査結果の取得に失敗しました。再実行しますか？「はい」か「いいえ」で回答してください"]
@@ -1212,8 +1228,10 @@ class messageText:
         
         return [
             "保険商品の情報収集をキャンセルしました。",
-            "はじめから乗り換え提案の生成をやり直す場合は、想定されるお客様の年齢と性別を教えてください。\n\nまた、その他の補足情報があれば教えてください",
-            "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者　など"
+            "はじめから乗り換え提案の生成をやり直す場合は、想定されるお客様の年齢と性別を教えてください。\n\nまた、その他の補足情報があれば教えてください\n\n--------------",
+            "年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者",
+            "--------------\n\n点線内だけをコピペして、内容を変えて送信してね(^^♪",
+            "※項目は増やしてもOKです。情報が多いほど、より良い提案ができるよ！"
         ]
 
     def process_create_proposal(self):
@@ -1306,8 +1324,10 @@ class messageText:
         
         return [
             "乗り換え提案トークの作成をキャンセルしました。",
-            "はじめから乗り換え提案の生成をやり直す場合は、想定されるお客様の年齢と性別を教えてください。詳しいほど、より正確な情報をご提供できます。\n\nまた、その他の補足情報があれば教えてください",
-            "例：\n年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者　など"
+            "はじめから乗り換え提案の生成をやり直す場合は、想定されるお客様の年齢と性別を教えてください。\n\n--------------",
+            "年齢:45歳\n性別:男性\n職業:会社員\n保険の目的:死亡保障と子供の積立、老後の資産\n死亡受取:配偶者",
+            "--------------\n\n点線内だけをコピペして、内容を変えて送信してね(^^♪",
+            "※項目は増やしてもOKです。情報が多いほど、より良い提案ができるよ！"
         ]
 
     def process_summary_proposal(self):
@@ -1552,7 +1572,6 @@ class messageText:
         return [
             "保険提案セリフ作成をキャンセルしました。",
             "やり直す場合は、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください。\n\n詳しいほど、より正確な情報をご提供できます。",
-            "例：\n年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都　など",
             "終了する場合は、別のメニューを選択してください"
         ]
 
@@ -1660,8 +1679,10 @@ class messageText:
         
         return [
             "保険提案トーク作成をキャンセルしました。",
-            "やり直す場合は、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください。\n\n詳しいほど、より正確な情報をご提供できます。",
-            "例：\n年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都　など"
+            "やり直す場合は、想定される被保険者の年齢と性別、その他の保険提案の参考になりそうな情報があれば教えてください。\n\n--------------",
+            "年齢:30代\n性別:女性\n家族構成:夫婦2人\n職業:会社員\n居住地:東京都",
+            "--------------\n\n点線内だけをコピペして、内容を変えて送信してね(^^♪",
+            "※項目は増やしてもOKです。情報が多いほど、より良い提案ができるよ！"
         ]
 
     def process_talk_summary_proposal(self):
